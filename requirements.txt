@@ -3,4 +3,5 @@ pandas
 openpyxl
 reportlab
 altair
+st-gsheets-connection
 qrcode[pil]
