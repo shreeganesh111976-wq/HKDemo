@@ -243,21 +243,32 @@ def main_app():
         inv_date = c2.date_input("Date")
         inv_no = st.text_input("Invoice No (e.g. 001)")
         
-        # --- STATE DOCTOR: FIX CORRUPTED ITEM STATE ---
-        # This block ensures 'items' is ALWAYS a DataFrame before usage
+        # --- SELF HEALING DATA STRUCTURE ---
+        # 1. Reset if corrupted
         if "items" not in st.session_state or not isinstance(st.session_state.items, pd.DataFrame):
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
         
-        # Force Clean Types
+        # 2. Strict Type Casting (Safe Wrap)
         try:
+            st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
             st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
             st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
-            st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
-        except:
-            # If types fail (e.g. corrupted data), Hard Reset
+        except Exception:
+            # If casting fails, FORCE RESET
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
 
-        edited_items = st.data_editor(st.session_state.items, num_rows="dynamic", use_container_width=True)
+        # 3. Configured Editor
+        edited_items = st.data_editor(
+            st.session_state.items, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            column_config={
+                "Description": st.column_config.TextColumn("Description", required=True),
+                "Qty": st.column_config.NumberColumn("Qty", required=True, default=1.0),
+                "Rate": st.column_config.NumberColumn("Rate", required=True, default=0.0)
+            },
+            key="bill_editor_safe"
+        )
         
         valid = edited_items[edited_items["Description"]!=""].copy()
         valid["Qty"] = pd.to_numeric(valid["Qty"], errors='coerce').fillna(0)
@@ -329,3 +340,4 @@ def main_app():
 
 if st.session_state.user_id: main_app()
 else: login_page()
+
