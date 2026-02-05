@@ -6,7 +6,10 @@ import io
 import urllib.parse
 import random
 import string
-import re  # Added for Regex Validation
+import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import date
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -17,6 +20,11 @@ from streamlit_gsheets import GSheetsConnection
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
+
+# --- EMAIL CONFIGURATION (MUST FILL THIS) ---
+# Replace with your actual gmail and the App Password you generated
+SENDER_EMAIL = "shreeganesh111976@gmail.com"  # <--- PUT YOUR GMAIL HERE
+SENDER_PASSWORD = "bxsl wvas wkua nkoh"  # <--- PUT YOUR 16-CHAR APP PASSWORD HERE
 
 # --- SECRETS & CONSTANTS ---
 APP_NAME = "HisaabKeeper"
@@ -160,24 +168,53 @@ def get_whatsapp_link(mobile, msg):
     if not mobile: return None
     return f"https://wa.me/91{mobile}?text={urllib.parse.quote(msg)}"
 
-# --- AUTHENTICATION & VALIDATION HELPERS ---
+# --- AUTH & OTP HELPERS ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
 if "reg_success_msg" not in st.session_state: st.session_state.reg_success_msg = None
 
+# New Session States for OTP
+if "otp_generated" not in st.session_state: st.session_state.otp_generated = None
+if "otp_email" not in st.session_state: st.session_state.otp_email = None
+if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
+
 def generate_unique_id():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 
 def is_valid_email(email):
-    # Standard email regex
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
 def is_valid_mobile(mobile):
-    # Checks if 10 digits and starts with 6,7,8,9
     pattern = r'^[6-9]\d{9}$'
     return re.match(pattern, mobile) is not None
+
+def send_otp_email(to_email, otp_code):
+    """Sends OTP via SMTP."""
+    if "your_email" in SENDER_EMAIL:
+        st.error("Setup Error: Sender Email not configured in code.")
+        return False
+        
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = to_email
+        msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
+        
+        body = f"Hello,\n\nYour One-Time Password (OTP) for registration is: {otp_code}\n\nDo not share this with anyone.\n\nRegards,\nHisaabKeeper Team"
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(SENDER_EMAIL, to_email, text)
+        server.quit()
+        return True
+    except Exception as e:
+        st.error(f"Failed to send email: {e}")
+        return False
 
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
@@ -212,47 +249,94 @@ def login_page():
             col1.write("New to HisaabKeeper?")
             if col2.button("Create Account"):
                 st.session_state.auth_mode = "register"
+                st.session_state.otp_generated = None # Reset OTP
                 st.rerun()
 
     elif st.session_state.auth_mode == "register":
         with st.container():
             st.subheader("Create New Account")
-            with st.form("reg_form"):
-                new_username = st.text_input("Choose Username (Unique)")
-                new_pwd = st.text_input("Choose Password", type="password")
-                bn = st.text_input("Business Name")
-                mob = st.text_input("Mobile Number (10 digits)")
-                em = st.text_input("Email ID")
-                
-                submitted = st.form_submit_button("Register")
-                
-                if submitted:
-                    df_users = fetch_data("Users")
+            
+            # STEP 1: FILL DETAILS & SEND OTP
+            if st.session_state.otp_generated is None:
+                with st.form("reg_form"):
+                    new_username = st.text_input("Choose Username (Unique)")
+                    new_pwd = st.text_input("Choose Password", type="password")
+                    bn = st.text_input("Business Name")
+                    mob = st.text_input("Mobile Number (10 digits)")
+                    em = st.text_input("Email ID")
                     
-                    # --- VALIDATION CHECKS ---
-                    if not new_username or not new_pwd or not bn or not mob or not em:
-                        st.error("All fields are mandatory.")
-                    elif not is_valid_mobile(mob):
-                        st.error("Invalid Mobile Number! Enter 10 digits starting with 6-9.")
-                    elif not is_valid_email(em):
-                        st.error("Invalid Email ID format!")
-                    elif not df_users.empty and "Username" in df_users.columns and new_username in df_users["Username"].astype(str).values:
-                        st.error("Username already taken! Please choose another.")
-                    else:
-                        unique_id = generate_unique_id()
-                        new_user = {
-                            "UserID": unique_id, "Username": new_username, "Password": new_pwd, 
-                            "Business Name": bn, "Tagline": "", "GSTIN": "", 
-                            "Mobile": mob, "Email": em, "Addr1": "", "Addr2": "", "Is GST": "No"
-                        }
-                        save_row_to_sheet("Users", new_user)
-                        st.session_state.reg_success_msg = f"🎉 Congratulations! Registration Successful. Please login with: {new_username}"
-                        st.session_state.auth_mode = "login"
+                    if st.form_submit_button("Verify Email & Register"):
+                        df_users = fetch_data("Users")
+                        
+                        if not new_username or not new_pwd or not bn or not mob or not em:
+                            st.error("All fields are mandatory.")
+                        elif not is_valid_mobile(mob):
+                            st.error("Invalid Mobile Number!")
+                        elif not is_valid_email(em):
+                            st.error("Invalid Email Format!")
+                        elif not df_users.empty and "Username" in df_users.columns and new_username in df_users["Username"].astype(str).values:
+                            st.error("Username already taken! Please choose another.")
+                        else:
+                            # Generate OTP
+                            otp = str(random.randint(100000, 999999))
+                            
+                            # Store temp data
+                            st.session_state.reg_temp_data = {
+                                "Username": new_username, "Password": new_pwd, "Business Name": bn, "Mobile": mob, "Email": em
+                            }
+                            
+                            with st.spinner("Sending OTP..."):
+                                if send_otp_email(em, otp):
+                                    st.session_state.otp_generated = otp
+                                    st.session_state.otp_email = em
+                                    st.toast(f"OTP sent to {em}", icon="📧")
+                                    st.rerun()
+                                else:
+                                    st.error("Could not send email. Check internet or SMTP settings.")
+
+            # STEP 2: VERIFY OTP
+            else:
+                st.info(f"An OTP has been sent to **{st.session_state.otp_email}**")
+                with st.form("otp_form"):
+                    user_otp = st.text_input("Enter 6-Digit OTP")
+                    c1, c2 = st.columns(2)
+                    verify_btn = c1.form_submit_button("Confirm Registration", type="primary")
+                    cancel_btn = c2.form_submit_button("Cancel / Back")
+                    
+                    if verify_btn:
+                        if user_otp == st.session_state.otp_generated:
+                            # SAVE DATA
+                            unique_id = generate_unique_id()
+                            final_data = st.session_state.reg_temp_data
+                            new_user = {
+                                "UserID": unique_id,
+                                "Username": final_data["Username"],
+                                "Password": final_data["Password"],
+                                "Business Name": final_data["Business Name"],
+                                "Tagline": "", "GSTIN": "",
+                                "Mobile": final_data["Mobile"],
+                                "Email": final_data["Email"],
+                                "Addr1": "", "Addr2": "", "Is GST": "No"
+                            }
+                            save_row_to_sheet("Users", new_user)
+                            
+                            # CLEANUP & REDIRECT
+                            st.session_state.otp_generated = None
+                            st.session_state.reg_temp_data = {}
+                            st.session_state.reg_success_msg = f"🎉 Verified! Registration Successful for {final_data['Username']}"
+                            st.session_state.auth_mode = "login"
+                            st.rerun()
+                        else:
+                            st.error("Incorrect OTP. Please try again.")
+                    
+                    if cancel_btn:
+                        st.session_state.otp_generated = None
                         st.rerun()
 
             st.markdown("---")
             if st.button("Back to Login"):
                 st.session_state.auth_mode = "login"
+                st.session_state.otp_generated = None
                 st.rerun()
 
 # --- MAIN APP ---
