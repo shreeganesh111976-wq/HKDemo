@@ -6,6 +6,7 @@ import io
 import urllib.parse
 import random
 import string
+import re  # Added for Regex Validation
 from datetime import date
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
@@ -18,11 +19,6 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
 
 # --- SECRETS & CONSTANTS ---
-# (Secrets are handled by .streamlit/secrets.toml usually, but kept here as per your request format)
-# Note: Ensure the [connections.gsheets] block is in your secrets.toml file for local dev, 
-# or pasted into the Streamlit Cloud secrets management. 
-# Since you pasted it in the code block previously, I assume you are handling it via the file.
-
 APP_NAME = "HisaabKeeper"
 
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
@@ -38,7 +34,6 @@ def fetch_data(worksheet_name):
     except Exception:
         # Default columns if sheet is empty/missing
         if worksheet_name == "Users": 
-            # Added 'Username' to columns
             cols = ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "Mobile", "Email", "Addr1", "Addr2"]
         elif worksheet_name == "Customers": 
             cols = ["UserID", "Name", "GSTIN", "Mobile", "Address 1"]
@@ -59,7 +54,6 @@ def fetch_user_data(worksheet_name):
     
     if "UserID" in df.columns:
         df["UserID"] = df["UserID"].astype(str)
-        # Filter by the 16-char System ID
         return df[df["UserID"] == str(st.session_state["user_id"])]
     return df
 
@@ -68,7 +62,6 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
     
-    # If UserID is not provided (e.g. for transactions), inject the logged-in user's 16-char ID
     if "UserID" not in new_row_dict and worksheet_name != "Users":
         new_row_dict["UserID"] = st.session_state["user_id"]
     
@@ -167,27 +160,32 @@ def get_whatsapp_link(mobile, msg):
     if not mobile: return None
     return f"https://wa.me/91{mobile}?text={urllib.parse.quote(msg)}"
 
-# --- AUTHENTICATION ---
+# --- AUTHENTICATION & VALIDATION HELPERS ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
-if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login" # 'login' or 'register'
+if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
 if "reg_success_msg" not in st.session_state: st.session_state.reg_success_msg = None
 
 def generate_unique_id():
-    """Generates a random 16-character alphanumeric ID."""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
+
+def is_valid_email(email):
+    # Standard email regex
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, email) is not None
+
+def is_valid_mobile(mobile):
+    # Checks if 10 digits and starts with 6,7,8,9
+    pattern = r'^[6-9]\d{9}$'
+    return re.match(pattern, mobile) is not None
 
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
     
-    # Display success message if redirected from registration
     if st.session_state.reg_success_msg:
         st.success(st.session_state.reg_success_msg)
-        st.session_state.reg_success_msg = None # Clear message after displaying
+        st.session_state.reg_success_msg = None
 
-    # --- MODE SWITCHER ---
-    # We use a container to toggle between Login and Register views
-    
     if st.session_state.auth_mode == "login":
         with st.container():
             st.subheader("Sign In")
@@ -197,16 +195,12 @@ def login_page():
                 
                 if st.form_submit_button("Login", type="primary"):
                     df_users = fetch_data("Users")
-                    
                     if "Username" in df_users.columns:
                         df_users["Username"] = df_users["Username"].astype(str)
                         df_users["Password"] = df_users["Password"].astype(str)
-                        
-                        # Match Username and Password
                         user_row = df_users[(df_users["Username"] == user_input) & (df_users["Password"] == pwd)]
                         
                         if not user_row.empty:
-                            # SAVE THE 16-CHAR UNIQUE ID TO SESSION
                             st.session_state.user_id = str(user_row.iloc[0]["UserID"])
                             st.session_state.user_profile = user_row.iloc[0].to_dict()
                             st.success("Login Successful!"); time.sleep(1); st.rerun()
@@ -227,38 +221,32 @@ def login_page():
                 new_username = st.text_input("Choose Username (Unique)")
                 new_pwd = st.text_input("Choose Password", type="password")
                 bn = st.text_input("Business Name")
-                # Mandatory Fields
-                mob = st.text_input("Mobile Number (Mandatory)")
-                em = st.text_input("Email ID (Mandatory)")
+                mob = st.text_input("Mobile Number (10 digits)")
+                em = st.text_input("Email ID")
                 
                 submitted = st.form_submit_button("Register")
                 
                 if submitted:
                     df_users = fetch_data("Users")
                     
-                    # VALIDATION
+                    # --- VALIDATION CHECKS ---
                     if not new_username or not new_pwd or not bn or not mob or not em:
-                        st.error("All fields including Mobile and Email are mandatory.")
+                        st.error("All fields are mandatory.")
+                    elif not is_valid_mobile(mob):
+                        st.error("Invalid Mobile Number! Enter 10 digits starting with 6-9.")
+                    elif not is_valid_email(em):
+                        st.error("Invalid Email ID format!")
                     elif not df_users.empty and "Username" in df_users.columns and new_username in df_users["Username"].astype(str).values:
                         st.error("Username already taken! Please choose another.")
                     else:
-                        # Generate 16-Char Unique ID
                         unique_id = generate_unique_id()
-                        
                         new_user = {
-                            "UserID": unique_id,        # System ID
-                            "Username": new_username,   # Login ID
-                            "Password": new_pwd, 
-                            "Business Name": bn,
-                            "Tagline": "", "GSTIN": "", 
-                            "Mobile": mob, 
-                            "Email": em, 
-                            "Addr1": "", "Addr2": "", "Is GST": "No"
+                            "UserID": unique_id, "Username": new_username, "Password": new_pwd, 
+                            "Business Name": bn, "Tagline": "", "GSTIN": "", 
+                            "Mobile": mob, "Email": em, "Addr1": "", "Addr2": "", "Is GST": "No"
                         }
                         save_row_to_sheet("Users", new_user)
-                        
-                        # REDIRECT LOGIC
-                        st.session_state.reg_success_msg = f"🎉 Congratulations! You are registered. Please login with Username: {new_username}"
+                        st.session_state.reg_success_msg = f"🎉 Congratulations! Registration Successful. Please login with: {new_username}"
                         st.session_state.auth_mode = "login"
                         st.rerun()
 
@@ -271,8 +259,6 @@ def login_page():
 def main_app():
     profile = st.session_state.user_profile
     st.sidebar.title(f"🏢 {profile.get('Business Name', 'My Business')}")
-    
-    # Displaying Username in sidebar for reference
     st.sidebar.caption(f"User: {profile.get('Username', 'User')}")
     
     if st.sidebar.button("Logout"):
@@ -312,10 +298,8 @@ def main_app():
         inv_date = c2.date_input("Date")
         inv_no = st.text_input("Invoice No (e.g. 001)")
         
-        # --- SELF HEALING DATA STRUCTURE ---
         if "items" not in st.session_state or not isinstance(st.session_state.items, pd.DataFrame):
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
-        
         try:
             st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
             st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
@@ -339,12 +323,10 @@ def main_app():
         valid["Qty"] = pd.to_numeric(valid["Qty"], errors='coerce').fillna(0)
         valid["Rate"] = pd.to_numeric(valid["Rate"], errors='coerce').fillna(0)
         valid["Amount"] = valid["Qty"] * valid["Rate"]
-        
         subtotal = valid["Amount"].sum()
         is_gst = profile.get("Is GST", "No") == "Yes"
         tax = subtotal * 0.18 if is_gst else 0
         total = subtotal + tax
-        
         st.markdown(f"### Total: ₹ {total:,.2f}")
         
         if st.button("Generate & Save", type="primary"):
@@ -386,10 +368,7 @@ def main_app():
 
     elif choice == "Profile":
         st.header("⚙️ Company Profile")
-        
-        # DISPLAY UNIQUE ID (Read Only)
         st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
-        
         with st.form("edit_profile"):
             c1, c2 = st.columns(2)
             bn = st.text_input("Business Name", value=profile.get("Business Name", ""))
