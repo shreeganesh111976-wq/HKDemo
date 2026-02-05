@@ -126,6 +126,19 @@ def find_invoice_pdf(bill_no):
     except: return None
     return None
 
+def get_invoice_whatsapp_msg(cust_name, invoice_no, firm_name, date_str, amount, contact_info):
+    return f"""Hi *{cust_name}*,
+
+Greetings from *{firm_name}*. Sending invoice *{invoice_no}* dated *{date_str}* for *₹{amount}*.
+
+*{firm_name}*
+{contact_info}"""
+
+def get_ledger_whatsapp_msg(name, balance, firm_name, contact_info):
+    return f"""Hi *{name}*,
+Greetings from *{firm_name}*. Gentle reminder for pending payment: *₹ {balance:,.2f}*.
+*{firm_name}*"""
+
 # --- QR CODE GENERATION (WITH LOGO SUPPORT) ---
 def generate_upi_qr(upi_id, name, amount, note):
     if not upi_id: return None
@@ -468,16 +481,26 @@ elif "Dashboard" in selection:
     st.header(f"📊 {firm_name}")
     st.markdown("---")
     
+    # LOAD AND CLEAN DATA (FIXES TYPE ERROR)
     b2b = load_data(GST_FILE, ['Date', 'Invoice Value', 'Taxable', 'CGST', 'SGST', 'IGST', 'Buyer Name'])
     inward = load_data(INWARD_FILE, ['Date', 'Total Value', 'Taxable', 'CGST', 'SGST', 'IGST'])
-    b2b['Invoice Value'] = pd.to_numeric(b2b['Invoice Value'], errors='coerce')
-    inward['Total Value'] = pd.to_numeric(inward['Total Value'], errors='coerce')
+    
+    # CONVERT TO NUMERIC (IMPORTANT FIX)
+    numeric_cols = ['Invoice Value', 'Taxable', 'CGST', 'SGST', 'IGST']
+    for col in numeric_cols:
+        if col in b2b.columns:
+            b2b[col] = pd.to_numeric(b2b[col], errors='coerce').fillna(0)
+    
+    inward_num_cols = ['Total Value', 'Taxable', 'CGST', 'SGST', 'IGST']
+    for col in inward_num_cols:
+        if col in inward.columns:
+            inward[col] = pd.to_numeric(inward[col], errors='coerce').fillna(0)
 
     s_val = b2b['Invoice Value'].sum()
     p_val = inward['Total Value'].sum()
     gst_col = b2b[['CGST','SGST','IGST']].sum().sum()
     gst_pd = inward[['CGST','SGST','IGST']].sum().sum()
-    prof = pd.to_numeric(b2b['Taxable'], errors='coerce').sum() - pd.to_numeric(inward['Taxable'], errors='coerce').sum()
+    prof = b2b['Taxable'].sum() - inward['Taxable'].sum()
 
     # RESTORED 5 CARDS
     k1, k2, k3, k4, k5 = st.columns(5)
@@ -640,10 +663,15 @@ elif "Customer Ledger" in selection:
     
     if sel_cust != "Select":
         inv = load_data(GST_FILE, ['Buyer Name', 'Invoice Value']); rec = load_data(RECEIPT_FILE, ['Party Name', 'Amount'])
+        
+        # CLEAN DATA TYPES FOR LEDGER TOO
+        inv['Invoice Value'] = pd.to_numeric(inv['Invoice Value'], errors='coerce').fillna(0)
+        rec['Amount'] = pd.to_numeric(rec['Amount'], errors='coerce').fillna(0)
+
         c_inv = inv[inv['Buyer Name'] == sel_cust]
         c_rec = rec[rec['Party Name'] == sel_cust]
         
-        bal = pd.to_numeric(c_inv['Invoice Value'], errors='coerce').sum() - pd.to_numeric(c_rec['Amount'], errors='coerce').sum()
+        bal = c_inv['Invoice Value'].sum() - c_rec['Amount'].sum()
         st.info(f"💰 Pending Balance: ₹ {bal:,.2f}")
         
         if bal > 0:
@@ -653,6 +681,15 @@ elif "Customer Ledger" in selection:
                 qr_path = generate_upi_qr(upi_id, firm_name, bal, f"Due from {sel_cust}")
                 st.image(qr_path, width=200, caption="Scan to Pay")
             else: st.warning("Add UPI ID in Profile to see QR")
+        
+        with st.expander("➕ Add Receipt", expanded=True):
+            with st.form("rec_form"):
+                r_amt = st.number_input("Amount", min_value=0.0)
+                r_note = st.text_input("Note")
+                if st.form_submit_button("Save Receipt", type="primary"):
+                    new_r = {'Date': date.today().strftime("%d-%m-%Y"), 'Party Name': sel_cust, 'Amount': r_amt, 'Note': r_note}
+                    save_data(RECEIPT_FILE, pd.concat([load_data(RECEIPT_FILE, []), pd.DataFrame([new_r])], ignore_index=True))
+                    st.success("Saved!"); time.sleep(1); st.rerun()
 
 # ---------------------------------------------------------
 # 6. RECORDS & INWARD
