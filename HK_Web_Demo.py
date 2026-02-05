@@ -80,22 +80,18 @@ def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
     df = fetch_data("Users")
     
-    # Ensure UserID is string for comparison
     df["UserID"] = df["UserID"].astype(str)
     current_uid = str(st.session_state["user_id"])
-    
-    # Find the index of the user
     idx = df[df["UserID"] == current_uid].index
     
     if not idx.empty:
-        # Update columns based on the dictionary provided
         for key, value in updated_profile_dict.items():
             df.at[idx[0], key] = value
         
         try:
             conn.update(worksheet="Users", data=df)
             st.cache_data.clear()
-            st.session_state.user_profile = df.iloc[idx[0]].to_dict() # Update session
+            st.session_state.user_profile = df.iloc[idx[0]].to_dict()
             return True
         except Exception as e:
             st.error(f"Failed to update profile: {e}")
@@ -108,23 +104,19 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
     
-    # Header
     c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
     c.setFont("Helvetica", 10)
     c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
     
     y = h-80
-    if seller.get('GSTIN'): 
-        c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
-    
+    if seller.get('GSTIN'): c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
     addr = f"{seller.get('Addr1','')}, {seller.get('Addr2','')}"
     c.drawCentredString(w/2, y, addr); y-=12
     c.drawCentredString(w/2, y, f"M: {seller.get('Mobile','')} | E: {seller.get('Email','')}")
     
     c.line(30, y-10, w-30, y-10)
     
-    # Bill To
     y_bill = y-40
     c.setFont("Helvetica-Bold", 10); c.drawString(40, y_bill, "Bill To:")
     c.setFont("Helvetica", 10)
@@ -132,22 +124,16 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
     c.drawString(40, y_bill-45, f"Addr: {buyer.get('Address 1','')}")
 
-    # Invoice Details
     c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
     c.setFont("Helvetica", 10)
     c.drawString(400, y_bill-15, f"No: {inv_no}")
     c.drawString(400, y_bill-30, f"Date: {buyer.get('Date','')}")
     
-    # Table Header
     y_table = y_bill - 70
     c.setFont("Helvetica-Bold", 9)
-    c.drawString(40, y_table, "Item")
-    c.drawString(300, y_table, "Qty")
-    c.drawString(350, y_table, "Rate")
-    c.drawString(450, y_table, "Amount")
+    c.drawString(40, y_table, "Item"); c.drawString(300, y_table, "Qty"); c.drawString(350, y_table, "Rate"); c.drawString(450, y_table, "Amount")
     c.line(30, y_table-5, w-30, y_table-5)
     
-    # Items
     y_row = y_table - 20
     c.setFont("Helvetica", 9)
     for i in items:
@@ -155,23 +141,14 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
         qty = str(i.get('Qty', 0))
         rate = f"{float(i.get('Rate', 0)):.2f}"
         amt = f"{float(i.get('Qty', 0)) * float(i.get('Rate', 0)):.2f}"
-        
-        c.drawString(40, y_row, name)
-        c.drawString(300, y_row, qty)
-        c.drawString(350, y_row, rate)
-        c.drawString(450, y_row, amt)
+        c.drawString(40, y_row, name); c.drawString(300, y_row, qty); c.drawString(350, y_row, rate); c.drawString(450, y_row, amt)
         y_row -= 15
-        
-        if y_row < 50: # Page break safety
-            c.showPage()
-            y_row = h - 50
+        if y_row < 50: c.showPage(); y_row = h - 50
 
-    # Totals
     c.line(30, y_row+5, w-30, y_row+5)
     c.setFont("Helvetica-Bold", 10)
     c.drawRightString(500, y_row-20, f"Taxable: {totals['taxable']:.2f}")
     c.drawRightString(500, y_row-35, f"Total: {totals['total']:.2f}")
-    
     c.save()
     buffer.seek(0)
     return buffer
@@ -204,8 +181,7 @@ def login_page():
                         st.session_state.user_profile = user_row.iloc[0].to_dict()
                         st.success("Login Successful!"); time.sleep(1); st.rerun()
                     else: st.error("Invalid Credentials")
-                else: 
-                    st.error("System Error: Users sheet missing. Please Register first to create it.")
+                else: st.error("System Error: Users sheet missing.")
 
     with tab2:
         st.write("### Create New Account")
@@ -213,8 +189,6 @@ def login_page():
             new_uid = st.text_input("Choose User ID (Unique)")
             new_pwd = st.text_input("Choose Password", type="password")
             bn = st.text_input("Business Name")
-            st.info("ℹ️ You can update GST, Address & Mobile later in Profile.")
-            
             if st.form_submit_button("Register"):
                 df_users = fetch_data("Users")
                 if not df_users.empty and "UserID" in df_users.columns and new_uid in df_users["UserID"].astype(str).values:
@@ -224,11 +198,10 @@ def login_page():
                 else:
                     new_user = {
                         "UserID": new_uid, "Password": new_pwd, "Business Name": bn,
-                        "Tagline": "", "GSTIN": "", "Mobile": "", "Email": "",
-                        "Addr1": "", "Addr2": "", "Is GST": "No"
+                        "Tagline": "", "GSTIN": "", "Mobile": "", "Email": "", "Addr1": "", "Addr2": "", "Is GST": "No"
                     }
                     save_row_to_sheet("Users", new_user)
-                    st.success("Registered Successfully! Please Login.")
+                    st.success("Registered! Please Login.")
 
 # --- MAIN APP ---
 def main_app():
@@ -237,42 +210,31 @@ def main_app():
     st.sidebar.caption(f"User: {st.session_state.user_id}")
     
     if st.sidebar.button("Logout"):
-        st.session_state.user_id = None
-        st.rerun()
+        st.session_state.user_id = None; st.rerun()
     
     choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing", "Ledger", "Inward", "Profile"])
     
-    # --- DASHBOARD ---
     if choice == "Dashboard":
         st.header("📊 Dashboard")
         df_inv = fetch_user_data("Invoices")
         total_sales = 0
         if not df_inv.empty and "Invoice Value" in df_inv.columns:
             total_sales = pd.to_numeric(df_inv["Invoice Value"], errors='coerce').sum()
-            
         st.metric("Total Sales", f"₹ {total_sales:,.0f}")
         st.dataframe(df_inv.tail(5), use_container_width=True)
 
-    # --- CUSTOMER MASTER ---
     elif choice == "Customer Master":
         st.header("👥 Customers")
         with st.expander("Add New Customer"):
             with st.form("add_c"):
-                name = st.text_input("Name")
-                gst = st.text_input("GSTIN")
-                mob = st.text_input("Mobile")
-                addr = st.text_input("Address")
+                name = st.text_input("Name"); gst = st.text_input("GSTIN"); mob = st.text_input("Mobile"); addr = st.text_input("Address")
                 if st.form_submit_button("Save"):
                     save_row_to_sheet("Customers", {"Name": name, "GSTIN": gst, "Mobile": mob, "Address 1": addr})
                     st.success("Saved!"); st.rerun()
-        
         st.dataframe(fetch_user_data("Customers"), use_container_width=True)
 
-    # --- BILLING ---
     elif choice == "Billing":
         st.header("🧾 New Invoice")
-        
-        # 1. Select Customer
         df_cust = fetch_user_data("Customers")
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
         
@@ -281,129 +243,89 @@ def main_app():
         inv_date = c2.date_input("Date")
         inv_no = st.text_input("Invoice No (e.g. 001)")
         
-        # 2. Add Items (CRITICAL FIX FOR CRASH)
-        if "items" not in st.session_state: 
+        # --- STATE DOCTOR: FIX CORRUPTED ITEM STATE ---
+        # This block ensures 'items' is ALWAYS a DataFrame before usage
+        if "items" not in st.session_state or not isinstance(st.session_state.items, pd.DataFrame):
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
         
-        # Force Data Types BEFORE passing to data_editor
-        # This prevents the StreamlitAPIException
-        st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
-        st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
-        st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
+        # Force Clean Types
+        try:
+            st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
+            st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
+            st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
+        except:
+            # If types fail (e.g. corrupted data), Hard Reset
+            st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
 
-        edited_items = st.data_editor(
-            st.session_state.items, 
-            num_rows="dynamic", 
-            use_container_width=True,
-            column_config={
-                "Qty": st.column_config.NumberColumn("Qty", format="%.2f"),
-                "Rate": st.column_config.NumberColumn("Rate", format="%.2f")
-            }
-        )
+        edited_items = st.data_editor(st.session_state.items, num_rows="dynamic", use_container_width=True)
         
-        # 3. Calculations
         valid = edited_items[edited_items["Description"]!=""].copy()
+        valid["Qty"] = pd.to_numeric(valid["Qty"], errors='coerce').fillna(0)
+        valid["Rate"] = pd.to_numeric(valid["Rate"], errors='coerce').fillna(0)
         valid["Amount"] = valid["Qty"] * valid["Rate"]
-        subtotal = valid["Amount"].sum()
         
+        subtotal = valid["Amount"].sum()
         is_gst = profile.get("Is GST", "No") == "Yes"
         tax = subtotal * 0.18 if is_gst else 0
         total = subtotal + tax
         
         st.markdown(f"### Total: ₹ {total:,.2f}")
         
-        # 4. Save
         if st.button("Generate & Save", type="primary"):
-            if sel_cust == "Select": 
-                st.error("Select Customer")
+            if sel_cust == "Select": st.error("Select Customer")
             else:
                 items_json = json.dumps(valid.to_dict('records'))
-                
-                save_row_to_sheet("Invoices", {
-                    "Bill No": inv_no, 
-                    "Date": str(inv_date), 
-                    "Buyer Name": sel_cust, 
-                    "Invoice Value": total, 
-                    "Taxable": subtotal, 
-                    "Items": items_json
-                })
-                
+                save_row_to_sheet("Invoices", {"Bill No": inv_no, "Date": str(inv_date), "Buyer Name": sel_cust, "Invoice Value": total, "Taxable": subtotal, "Items": items_json})
                 st.success("Invoice Saved!")
-                
                 cust_data = df_cust[df_cust["Name"] == sel_cust].iloc[0].to_dict()
                 pdf_bytes = generate_pdf_buffer(profile, cust_data, valid.to_dict('records'), inv_no, {'taxable': subtotal, 'total': total})
                 st.download_button("⬇️ Download PDF", pdf_bytes, f"Inv_{inv_no}.pdf", "application/pdf")
 
-    # --- LEDGER ---
     elif choice == "Ledger":
         st.header("📒 Ledger")
         df_cust = fetch_user_data("Customers")
         sel_cust = st.selectbox("Customer", ["Select"] + df_cust["Name"].tolist())
-        
         if sel_cust != "Select":
             df_inv = fetch_user_data("Invoices")
             df_rec = fetch_user_data("Receipts")
-            
-            total_billed = 0
-            total_paid = 0
-            
+            total_billed = 0; total_paid = 0
             if not df_inv.empty and "Invoice Value" in df_inv.columns:
-                cust_inv = df_inv[df_inv["Buyer Name"] == sel_cust]
-                total_billed = pd.to_numeric(cust_inv["Invoice Value"], errors='coerce').sum()
-            
+                total_billed = pd.to_numeric(df_inv[df_inv["Buyer Name"] == sel_cust]["Invoice Value"], errors='coerce').sum()
             if not df_rec.empty and "Amount" in df_rec.columns:
-                cust_rec = df_rec[df_rec["Party Name"] == sel_cust]
-                total_paid = pd.to_numeric(cust_rec["Amount"], errors='coerce').sum()
-            
+                total_paid = pd.to_numeric(df_rec[df_rec["Party Name"] == sel_cust]["Amount"], errors='coerce').sum()
             st.metric("Pending Balance", f"₹ {total_billed - total_paid:,.2f}")
-            
             with st.expander("Add Receipt"):
                 amt = st.number_input("Amount Received")
                 if st.button("Save Receipt"):
                     save_row_to_sheet("Receipts", {"Date": str(date.today()), "Party Name": sel_cust, "Amount": amt, "Note": "Payment"})
                     st.success("Saved!"); st.rerun()
 
-    # --- INWARD ---
     elif choice == "Inward":
         st.header("🚚 Inward Supply")
         with st.form("inw"):
-            sup = st.text_input("Supplier")
-            val = st.number_input("Value")
+            sup = st.text_input("Supplier"); val = st.number_input("Value")
             if st.form_submit_button("Save"):
                 save_row_to_sheet("Inward", {"Date": str(date.today()), "Supplier Name": sup, "Total Value": val})
                 st.success("Saved")
 
-    # --- PROFILE ---
     elif choice == "Profile":
         st.header("⚙️ Company Profile")
-        
         with st.form("edit_profile"):
             c1, c2 = st.columns(2)
             bn = st.text_input("Business Name", value=profile.get("Business Name", ""))
             tag = st.text_input("Tagline", value=profile.get("Tagline", ""))
-            
             c3, c4 = st.columns(2)
             gstin = st.text_input("GSTIN", value=profile.get("GSTIN", ""))
             is_gst = st.selectbox("Registered GST?", ["Yes", "No"], index=0 if profile.get("Is GST") == "Yes" else 1)
-            
             c5, c6 = st.columns(2)
             mob = st.text_input("Mobile", value=profile.get("Mobile", ""))
             em = st.text_input("Email", value=profile.get("Email", ""))
-            
             addr1 = st.text_input("Address 1", value=profile.get("Addr1", ""))
             addr2 = st.text_input("Address 2", value=profile.get("Addr2", ""))
-            
             if st.form_submit_button("💾 Update Profile"):
-                updated_data = {
-                    "Business Name": bn, "Tagline": tag, "GSTIN": gstin, "Is GST": is_gst,
-                    "Mobile": mob, "Email": em, "Addr1": addr1, "Addr2": addr2
-                }
+                updated_data = {"Business Name": bn, "Tagline": tag, "GSTIN": gstin, "Is GST": is_gst, "Mobile": mob, "Email": em, "Addr1": addr1, "Addr2": addr2}
                 if update_user_profile(updated_data):
-                    st.success("Profile Updated Successfully!")
-                    time.sleep(1)
-                    st.rerun()
+                    st.success("Profile Updated!"); time.sleep(1); st.rerun()
 
-if st.session_state.user_id:
-    main_app()
-else:
-    login_page()
+if st.session_state.user_id: main_app()
+else: login_page()
