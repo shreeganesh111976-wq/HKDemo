@@ -31,7 +31,7 @@ def fetch_data(worksheet_name):
     except Exception:
         # Default columns if sheet is empty/missing
         if worksheet_name == "Users": 
-            cols = ["UserID", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Bank Name", "Account No", "IFSC", "UPI ID"]
+            cols = ["UserID", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "Mobile", "Email", "Addr1", "Addr2"]
         elif worksheet_name == "Customers": 
             cols = ["UserID", "Name", "GSTIN", "Mobile", "Address 1"]
         elif worksheet_name == "Invoices": 
@@ -213,8 +213,6 @@ def login_page():
             new_uid = st.text_input("Choose User ID (Unique)")
             new_pwd = st.text_input("Choose Password", type="password")
             bn = st.text_input("Business Name")
-            
-            # REMOVED: GST/PAN/Mobile requirement at registration
             st.info("ℹ️ You can update GST, Address & Mobile later in Profile.")
             
             if st.form_submit_button("Register"):
@@ -224,7 +222,6 @@ def login_page():
                 elif not new_uid or not new_pwd or not bn:
                     st.error("User ID, Password and Business Name are required.")
                 else:
-                    # Minimal registration data
                     new_user = {
                         "UserID": new_uid, "Password": new_pwd, "Business Name": bn,
                         "Tagline": "", "GSTIN": "", "Mobile": "", "Email": "",
@@ -284,21 +281,31 @@ def main_app():
         inv_date = c2.date_input("Date")
         inv_no = st.text_input("Invoice No (e.g. 001)")
         
-        # 2. Add Items
+        # 2. Add Items (CRITICAL FIX FOR CRASH)
         if "items" not in st.session_state: 
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
         
-        edited_items = st.data_editor(st.session_state.items, num_rows="dynamic", use_container_width=True)
+        # Force Data Types BEFORE passing to data_editor
+        # This prevents the StreamlitAPIException
+        st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
+        st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
+        st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
+
+        edited_items = st.data_editor(
+            st.session_state.items, 
+            num_rows="dynamic", 
+            use_container_width=True,
+            column_config={
+                "Qty": st.column_config.NumberColumn("Qty", format="%.2f"),
+                "Rate": st.column_config.NumberColumn("Rate", format="%.2f")
+            }
+        )
         
         # 3. Calculations
         valid = edited_items[edited_items["Description"]!=""].copy()
-        
-        # Safe calculation
-        valid["Qty"] = pd.to_numeric(valid["Qty"], errors='coerce').fillna(0)
-        valid["Rate"] = pd.to_numeric(valid["Rate"], errors='coerce').fillna(0)
         valid["Amount"] = valid["Qty"] * valid["Rate"]
-        
         subtotal = valid["Amount"].sum()
+        
         is_gst = profile.get("Is GST", "No") == "Yes"
         tax = subtotal * 0.18 if is_gst else 0
         total = subtotal + tax
@@ -310,10 +317,8 @@ def main_app():
             if sel_cust == "Select": 
                 st.error("Select Customer")
             else:
-                # Prepare Data
                 items_json = json.dumps(valid.to_dict('records'))
                 
-                # Save to Sheet
                 save_row_to_sheet("Invoices", {
                     "Bill No": inv_no, 
                     "Date": str(inv_date), 
@@ -325,7 +330,6 @@ def main_app():
                 
                 st.success("Invoice Saved!")
                 
-                # Generate PDF
                 cust_data = df_cust[df_cust["Name"] == sel_cust].iloc[0].to_dict()
                 pdf_bytes = generate_pdf_buffer(profile, cust_data, valid.to_dict('records'), inv_no, {'taxable': subtotal, 'total': total})
                 st.download_button("⬇️ Download PDF", pdf_bytes, f"Inv_{inv_no}.pdf", "application/pdf")
@@ -369,7 +373,7 @@ def main_app():
                 save_row_to_sheet("Inward", {"Date": str(date.today()), "Supplier Name": sup, "Total Value": val})
                 st.success("Saved")
 
-    # --- PROFILE (NOW EDITABLE) ---
+    # --- PROFILE ---
     elif choice == "Profile":
         st.header("⚙️ Company Profile")
         
