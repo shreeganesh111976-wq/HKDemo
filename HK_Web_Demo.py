@@ -33,6 +33,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": [
@@ -245,7 +246,7 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- SESSION STATE INITIALIZATION ---
+# --- SESSION STATE ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
@@ -254,8 +255,10 @@ if "otp_generated" not in st.session_state: st.session_state.otp_generated = Non
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
 if "last_generated_invoice" not in st.session_state: st.session_state.last_generated_invoice = None
+# Reset trigger for invoice clear
+if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
 
-# --- WIDGET KEY INITIALIZATION FOR AUTO-CLEAR ---
+# Keys for auto-clearing widgets
 if "bm_invoice_no" not in st.session_state: st.session_state.bm_invoice_no = ""
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
@@ -416,20 +419,19 @@ def main_app():
         st.header("🧾 New Invoice")
         df_cust = fetch_user_data("Customers")
         
-        # --- UI LAYOUT FIXED ---
-        # Widen Column 1 (3 parts), Narrow Col 2 (0.5), Med Col 3 (1.5)
-        c1, c2, c3 = st.columns([3, 0.5, 1.5])
+        # --- UI LAYOUT FIXED: MATCHING FONT SIZES & BOLD ---
+        c1, c2, c3 = st.columns([3, 0.2, 1], vertical_alignment="bottom")
         
+        # 1. Customer
         c1.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
-        
-        # Controlled Selectbox
         def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
         sel_cust_name = c1.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
-        c2.write(""); c2.write("")
+        # 2. Add Button
         if c2.button("➕", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
+        # 3. Date
         c3.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
         inv_date_obj = c3.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
         inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
@@ -455,9 +457,7 @@ def main_app():
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
         ic1, ic2 = st.columns([1.3, 3]) 
-        # Controlled Input for Reset
         inv_no = ic1.text_input("Invoice Number", key="bm_inv_val", label_visibility="collapsed", placeholder="Enter Inv No")
-        
         df_inv_past = fetch_user_data("Invoices")
         past_str = "No past invoices"
         if not df_inv_past.empty:
@@ -467,6 +467,12 @@ def main_app():
 
         st.divider()
         st.markdown("#### 📦 Product / Service Details")
+
+        # --- AUTO CLEAR LOGIC & TABLE INIT ---
+        if st.session_state.reset_invoice_trigger:
+            st.session_state.invoice_items_grid = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
+            st.session_state.reset_invoice_trigger = False
+            st.rerun()
 
         if "invoice_items_grid" not in st.session_state:
             st.session_state.invoice_items_grid = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
@@ -480,7 +486,7 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="final_invoice_editor_polished_v3"
+            }, key="final_invoice_editor_polished_v4"
         )
 
         valid_items = edited_items[edited_items["Description"] != ""].copy()
@@ -509,31 +515,31 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (NATIVE COLUMNS) ---
+        # --- UI LAYOUT: CLEAN TOTALS SECTION (NO CUSTOM HTML) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
-            # Using native columns to ensure font match perfectly (Left: Label, Right: Value)
-            t_col1, t_col2 = st.columns([1, 1])
-            with t_col1:
-                st.write("**Sub Total:**")
-                if is_inter_state: st.write("**IGST:**")
-                else: st.write("**CGST+SGST:**")
-                st.markdown("---")
-                st.markdown("### Total:")
-            
-            with t_col2:
-                # Right align numbers using HTML wrapper just for alignment, NOT font
-                st.markdown(f"<div style='text-align: right;'>₹ {total_taxable:,.2f}</div>", unsafe_allow_html=True)
-                if is_inter_state:
-                    st.markdown(f"<div style='text-align: right;'>₹ {igst_val:,.2f}</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div style='text-align: right;'>₹ {cgst_val+sgst_val:,.2f}</div>", unsafe_allow_html=True)
-                st.markdown("---")
-                st.markdown(f"<div style='text-align: right; font-weight: bold; font-size: 1.2rem;'>₹ {grand_total:,.2f}</div>", unsafe_allow_html=True)
+            # Using Streamlit columns for alignment + Standard Font
+            with st.container(border=True):
+                tc1, tc2 = st.columns([1, 1])
+                with tc1:
+                    st.write("Sub Total:")
+                    if is_inter_state: st.write("IGST:")
+                    else: st.write("CGST+SGST:")
+                with tc2:
+                    st.write(f"**₹ {total_taxable:,.2f}**")
+                    if is_inter_state: st.write(f"**₹ {igst_val:,.2f}**")
+                    else: st.write(f"**₹ {cgst_val+sgst_val:,.2f}**")
+                
+                st.divider()
+                
+                tc3, tc4 = st.columns([1, 1])
+                with tc3: st.markdown("#### Total:")
+                with tc4: st.markdown(f"#### ₹ {grand_total:,.2f}")
             
             st.write("")
+            # GENERATE BUTTON
             if st.button("🚀 Save & Generate Invoice", type="primary", use_container_width=True):
                 is_duplicate = False
                 if not df_inv_past.empty and inv_no in df_inv_past["Bill No"].astype(str).values: is_duplicate = True
@@ -553,7 +559,6 @@ def main_app():
                     }
                     save_row_to_sheet("Invoices", db_row)
                     
-                    # Msg Gen
                     firm_name = profile.get('Business Name', 'Our Firm')
                     contact = f"{profile.get('Mobile','')}"
                     msg_body = f"""Hi *{sel_cust_name}*,
@@ -570,7 +575,6 @@ This mail is autogenerated through the *HisaabKeeper! Billing Software*.
 
 To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp us on +91 6353953790"""
                     
-                    # Store Success State
                     st.session_state.last_generated_invoice = {
                         "no": inv_no, 
                         "pdf_bytes": generate_pdf_buffer(profile, df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict(), valid_items.to_dict('records'), inv_no, inv_date_str, {'taxable': total_taxable, 'cgst': cgst_val, 'sgst': sgst_val, 'igst': igst_val, 'total': grand_total}, ship_data),
@@ -578,11 +582,9 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                         "mail_link": f"mailto:{cust_email}?subject={urllib.parse.quote(f'Invoice {inv_no} from {firm_name}')}&body={urllib.parse.quote(msg_body)}" if cust_email else None
                     }
                     
-                    # CLEAR FORM DATA
                     st.session_state.bm_cust_idx = 0
                     st.session_state.bm_date = date.today()
-                    st.session_state.invoice_items_grid = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
-                    st.session_state.reset_invoice_trigger = True # Trigger to clear manual inputs if needed
+                    st.session_state.reset_invoice_trigger = True 
                     st.rerun()
 
         # --- SUCCESS ACTIONS ---
@@ -593,7 +595,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
-            # SAFE KEY ACCESS (Fix for KeyError)
+            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
