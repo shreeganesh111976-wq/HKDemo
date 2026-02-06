@@ -36,7 +36,7 @@ def fetch_data(worksheet_name):
     """Fetches data and enforces schema (adds missing columns if needed)."""
     conn = get_db_connection()
     
-    # UPDATED SCHEMA TO MATCH YOUR EXCEL HEADERS EXACTLY
+    # SCHEMA (Must match your requirements exactly)
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -57,20 +57,18 @@ def fetch_data(worksheet_name):
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         
-        # --- SELF HEALING: Add missing columns if sheet exists but is old ---
+        # --- SELF HEALING ---
         if worksheet_name in schema:
             expected_cols = schema[worksheet_name]
             # Ensure dataframe has all expected columns
             for col in expected_cols:
                 if col not in df.columns:
                     df[col] = ""
-            
-            # Reorder to match schema exactly (Strict Order)
+            # Enforce Strict Order
             df = df[expected_cols]
             
         return df
     except Exception:
-        # If sheet doesn't exist, create empty DF with correct columns
         cols = schema.get(worksheet_name, [])
         return pd.DataFrame(columns=cols)
 
@@ -162,7 +160,7 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.drawString(40, y_bill-15, str(buyer.get('Name','')))
     c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
     
-    # Updated to match new column name 'Address 1'
+    # Map 'Address 1' for PDF
     buyer_addr = str(buyer.get('Address 1', ''))
     c.drawString(40, y_bill-45, f"Addr: {buyer_addr}")
 
@@ -232,7 +230,6 @@ def send_otp_email(to_email, otp_code):
 def to_excel_bytes(df):
     """Saves DataFrame to Excel bytes using openpyxl (better for templates)."""
     output = io.BytesIO()
-    # Changed engine to 'openpyxl' to avoid file corruption issues on some OS
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
@@ -346,104 +343,95 @@ def main_app():
     elif choice == "Customer Master":
         st.header("👥 Customers")
         
-        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION ---
-        st.write("### 📤 Import / Export Data")
-        
-        c_downloads, c_upload = st.columns([1, 2])
-        
-        # Define Columns EXACTLY as per your request
-        # UserID, Name, GSTIN, Address 1, Address 2, Address 3, Mobile, Email
-        # We only export/import the editable fields
-        cust_cols = ["Name", "GSTIN", "Address 1", "Address 2", "Address 3", "Mobile", "Email"]
-        
-        with c_downloads:
-            # Export Logic (Excel)
-            cust_df = fetch_user_data("Customers")
+        # --- EXPANDER 1: IMPORT / EXPORT ---
+        with st.expander("📤 Import / Export Data", expanded=False):
+            c_downloads, c_upload = st.columns([1, 2])
             
-            # --- SAFE EXPORT: CHECK COLS ---
-            # self-healing ensures cols exist, but check just in case
-            if not cust_df.empty and all(col in cust_df.columns for col in cust_cols):
-                final_export = cust_df[cust_cols]
-            else:
-                final_export = pd.DataFrame(columns=cust_cols)
+            cust_cols = ["Name", "GSTIN", "Address 1", "Address 2", "Address 3", "Mobile", "Email"]
             
-            excel_data = to_excel_bytes(final_export)
+            with c_downloads:
+                cust_df = fetch_user_data("Customers")
+                # Ensure columns exist before export
+                if not cust_df.empty and all(col in cust_df.columns for col in cust_cols):
+                    final_export = cust_df[cust_cols]
+                else:
+                    final_export = pd.DataFrame(columns=cust_cols)
+                
+                excel_data = to_excel_bytes(final_export)
+                
+                st.download_button(
+                    "⬇️ Download Data (Excel)", 
+                    data=excel_data, 
+                    file_name="MyCustomers.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                    use_container_width=True
+                )
+
+                st.write("")
+
+                template_df = pd.DataFrame(columns=cust_cols)
+                template_bytes = to_excel_bytes(template_df)
+                
+                st.download_button(
+                    "📄 Download Import Template", 
+                    data=template_bytes, 
+                    file_name="Import_Template.xlsx", 
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True
+                )
+
+            with c_upload:
+                uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
+                if uploaded_file is not None:
+                    try:
+                        imp_df = pd.read_excel(uploaded_file)
+                        if st.button("Confirm Import", type="primary"):
+                            if save_bulk_data("Customers", imp_df):
+                                st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
+                    except Exception as e: st.error(f"Error reading file: {e}")
+
+        # --- EXPANDER 2: ADD CUSTOMER ---
+        with st.expander("➕ Add New Customer", expanded=True):
+            st.markdown("### Basic Details")
+            c_name = st.text_input("👤 Customer Name")
             
-            st.download_button(
-                "⬇️ Download Data (Excel)", 
-                data=excel_data, 
-                file_name="MyCustomers.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
-                use_container_width=True
-            )
+            col_gst_in, col_gst_btn = st.columns([3, 1])
+            c_gst = col_gst_in.text_input("🏢 GSTIN")
+            col_gst_btn.write("") 
+            col_gst_btn.write("") 
+            if col_gst_btn.button("Fetch Details"):
+                st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
+            
+            st.divider()
+            st.markdown("### 📍 Address Details")
+            addr1 = st.text_input("Address Line 1")
+            addr2 = st.text_input("Address Line 2")
+            addr3 = st.text_input("Address Line 3")
+            
+            st.divider()
+            st.markdown("### 📞 Contact Details")
+            c1, c2 = st.columns(2)
+            mob = c1.text_input("Mobile")
+            email = c2.text_input("Email")
 
             st.write("")
+            if st.button("Save Customer Data", type="primary"):
+                if not c_name: st.error("Customer Name is required.")
+                else:
+                    save_row_to_sheet("Customers", {
+                        "Name": c_name, "GSTIN": c_gst, 
+                        "Address 1": addr1, "Address 2": addr2, "Address 3": addr3,
+                        "Mobile": mob, "Email": email
+                    })
+                    st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
 
-            # Download Template Logic
-            template_df = pd.DataFrame(columns=cust_cols)
-            template_bytes = to_excel_bytes(template_df)
-            
-            st.download_button(
-                "📄 Download Import Template", 
-                data=template_bytes, 
-                file_name="Import_Template.xlsx", 
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-
-        with c_upload:
-            uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
-            if uploaded_file is not None:
-                try:
-                    imp_df = pd.read_excel(uploaded_file)
-                    if st.button("Confirm Import", type="primary"):
-                        if save_bulk_data("Customers", imp_df):
-                            st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
-                except Exception as e: st.error(f"Error reading file: {e}")
-
-        st.divider()
-
-        # --- 2. ADD NEW CUSTOMER SECTION ---
-        st.subheader("Add New Customer")
-        c_name = st.text_input("👤 Customer Name")
-        
-        col_gst_in, col_gst_btn = st.columns([3, 1])
-        c_gst = col_gst_in.text_input("🏢 GSTIN")
-        col_gst_btn.write("") 
-        col_gst_btn.write("") 
-        if col_gst_btn.button("Fetch Details"):
-            st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
-
-        st.markdown("📍 **Address Details**")
-        addr1 = st.text_input("Address Line 1")
-        addr2 = st.text_input("Address Line 2")
-        addr3 = st.text_input("Address Line 3")
-        
-        st.markdown("📞 **Contact Details**")
-        c1, c2 = st.columns(2)
-        mob = c1.text_input("Mobile")
-        email = c2.text_input("Email")
-
-        if st.button("Save Customer Data", type="primary"):
-            if not c_name: st.error("Customer Name is required.")
+        # --- EXPANDER 3: DATABASE VIEW ---
+        with st.expander("📋 Customer Database", expanded=False):
+            view_df = fetch_user_data("Customers")
+            if not view_df.empty:
+                st.dataframe(view_df[cust_cols], use_container_width=True)
             else:
-                save_row_to_sheet("Customers", {
-                    "Name": c_name, "GSTIN": c_gst, 
-                    "Address 1": addr1, "Address 2": addr2, "Address 3": addr3,
-                    "Mobile": mob, "Email": email
-                })
-                st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
-
-        st.divider()
-
-        # --- 3. CUSTOMER DATABASE SECTION ---
-        st.subheader("Customer Database")
-        view_df = fetch_user_data("Customers")
-        # Display Only Relevant Cols
-        if not view_df.empty:
-            st.dataframe(view_df[cust_cols], use_container_width=True)
-        else:
-            st.info("No customers found.")
+                st.info("No customers found.")
 
     elif choice == "Billing":
         st.header("🧾 New Invoice")
