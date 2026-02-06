@@ -33,9 +33,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
-    
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -56,7 +54,6 @@ def fetch_data(worksheet_name):
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
     }
-
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         if worksheet_name in schema:
@@ -132,25 +129,20 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
-    
-    # Header
     c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
     c.setFont("Helvetica", 10)
     c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
-    
     y = h-80
     if seller.get('Is GST') == 'Yes' and seller.get('GSTIN'): 
         c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
     elif seller.get('PAN'):
         c.drawCentredString(w/2, y, f"PAN: {seller.get('PAN')}"); y-=12
-        
     addr = f"{seller.get('Addr1','')}, {seller.get('Addr2','')}, {seller.get('State','')}"
     c.drawCentredString(w/2, y, addr); y-=12
     c.drawCentredString(w/2, y, f"M: {seller.get('Mobile','')} | E: {seller.get('Email','')}")
     c.line(30, y-10, w-30, y-10)
     
-    # Billing Info
     y_bill = y-40
     c.setFont("Helvetica-Bold", 10); c.drawString(40, y_bill, "Bill To:")
     c.setFont("Helvetica", 10)
@@ -158,7 +150,6 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
     c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
     c.drawString(40, y_bill-45, f"Addr: {buyer.get('Address 1','')}, {buyer.get('State','')}")
 
-    # Shipping Info
     if ship_details and ship_details.get("IsShipping"):
         c.setFont("Helvetica-Bold", 10); c.drawString(200, y_bill, "Ship To:")
         c.setFont("Helvetica", 10)
@@ -166,24 +157,18 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
         c.drawString(200, y_bill-30, f"GSTIN: {ship_details.get('GSTIN','')}")
         c.drawString(200, y_bill-45, f"Addr: {ship_details.get('Addr1','')}")
 
-    # Invoice Meta
     c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
     c.setFont("Helvetica", 10)
     c.drawString(400, y_bill-15, f"No: {inv_no}")
     c.drawString(400, y_bill-30, f"Date: {inv_date}")
     
-    # Table Header
     y_table = y_bill - 70
     c.setFont("Helvetica-Bold", 9)
     headers = ["Item", "HSN", "Qty", "UOM", "Rate", "GST%", "Total"]
     x_positions = [40, 200, 250, 300, 350, 400, 450]
-    
-    for i, h_text in enumerate(headers):
-        c.drawString(x_positions[i], y_table, h_text)
-        
+    for i, h_text in enumerate(headers): c.drawString(x_positions[i], y_table, h_text)
     c.line(30, y_table-5, w-30, y_table-5)
     
-    # Table Rows
     y_row = y_table - 20
     c.setFont("Helvetica", 9)
     for i in items:
@@ -204,23 +189,18 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
         c.drawString(350, y_row, rate)
         c.drawString(400, y_row, gst_rate)
         c.drawString(450, y_row, f"{total_row:.2f}")
-        
         y_row -= 15
         if y_row < 50: c.showPage(); y_row = h - 50
 
     c.line(30, y_row+5, w-30, y_row+5)
-    
-    # Totals Section
     c.setFont("Helvetica-Bold", 10)
     y_total = y_row - 20
-    
     c.drawRightString(500, y_total, f"Taxable Value: {totals['taxable']:.2f}"); y_total -= 15
     if totals['cgst'] > 0:
         c.drawRightString(500, y_total, f"CGST: {totals['cgst']:.2f}"); y_total -= 15
         c.drawRightString(500, y_total, f"SGST: {totals['sgst']:.2f}"); y_total -= 15
     if totals['igst'] > 0:
         c.drawRightString(500, y_total, f"IGST: {totals['igst']:.2f}"); y_total -= 15
-        
     c.setFont("Helvetica-Bold", 12)
     c.drawRightString(500, y_total-10, f"Grand Total: ₹ {totals['total']:.2f}")
     
@@ -231,7 +211,6 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
         c.drawString(40, y_bank, "Bank Details:")
         c.setFont("Helvetica", 9)
         c.drawString(110, y_bank, f"{seller.get('Bank Name','')} | A/c: {seller.get('Account No','')} | IFSC: {seller.get('IFSC','')}")
-    
     c.save()
     buffer.seek(0)
     return buffer
@@ -240,7 +219,6 @@ def get_whatsapp_link(mobile, msg):
     if not mobile: return None
     return f"https://wa.me/91{mobile}?text={urllib.parse.quote(msg)}"
 
-# --- HELPER FUNCTIONS ---
 def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
 def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
@@ -248,8 +226,7 @@ def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is no
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
 def send_otp_email(to_email, otp_code):
-    if "your_email" in SENDER_EMAIL:
-        st.error("Setup Error: Sender Email not configured."); return False
+    if "your_email" in SENDER_EMAIL: st.error("Setup Error: Sender Email not configured."); return False
     try:
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL; msg['To'] = to_email; msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
@@ -266,7 +243,6 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- SESSION STATE ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
@@ -355,10 +331,8 @@ def login_page():
 def main_app():
     raw_profile = st.session_state.user_profile
     profile = {k: (v if str(v) != 'nan' else '') for k, v in raw_profile.items()}
-    
     st.sidebar.title(f"🏢 {profile.get('Business Name', 'My Business')}")
     st.sidebar.caption(f"User: {profile.get('Username', 'User')}")
-    
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
@@ -375,33 +349,26 @@ def main_app():
 
     elif choice == "Customer Master":
         st.header("👥 Customers")
-        
         with st.expander("📤 Import / Export Data", expanded=False):
             c_downloads, c_upload = st.columns([1, 2])
             cust_cols = ["Name", "GSTIN", "Address 1", "Address 2", "Address 3", "State", "Mobile", "Email"]
-            
             with c_downloads:
                 cust_df = fetch_user_data("Customers")
-                if not cust_df.empty and all(col in cust_df.columns for col in cust_cols):
-                    final_export = cust_df[cust_cols]
-                else:
-                    final_export = pd.DataFrame(columns=cust_cols)
-                
+                if not cust_df.empty and all(col in cust_df.columns for col in cust_cols): final_export = cust_df[cust_cols]
+                else: final_export = pd.DataFrame(columns=cust_cols)
                 excel_data = to_excel_bytes(final_export)
                 st.download_button("⬇️ Download Data (Excel)", data=excel_data, file_name="MyCustomers.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
                 st.write("")
                 template_df = pd.DataFrame(columns=cust_cols)
                 template_bytes = to_excel_bytes(template_df)
                 st.download_button("📄 Download Import Template", data=template_bytes, file_name="Import_Template.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
-
             with c_upload:
                 uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
                 if uploaded_file is not None:
                     try:
                         imp_df = pd.read_excel(uploaded_file)
                         if st.button("Confirm Import", type="primary"):
-                            if save_bulk_data("Customers", imp_df):
-                                st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
+                            if save_bulk_data("Customers", imp_df): st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
                     except Exception as e: st.error(f"Error reading file: {e}")
 
         with st.expander("➕ Add New Customer", expanded=True):
@@ -410,55 +377,42 @@ def main_app():
             col_gst_in, col_gst_btn = st.columns([3, 1])
             c_gst = col_gst_in.text_input("🏢 GSTIN")
             col_gst_btn.write(""); col_gst_btn.write("") 
-            if col_gst_btn.button("Fetch Details"):
-                st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
-            
+            if col_gst_btn.button("Fetch Details"): st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
             st.divider()
             st.markdown("### 📍 Address Details")
             addr1 = st.text_input("Address Line 1")
             addr2 = st.text_input("Address Line 2")
             addr3 = st.text_input("Address Line 3")
             state_val = st.text_input("State (Required for Tax Calculation)")
-            
             st.divider()
             st.markdown("### 📞 Contact Details")
             c1, c2 = st.columns(2)
             mob = c1.text_input("Mobile")
             email = c2.text_input("Email")
-
             st.write("")
             if st.button("Save Customer Data", type="primary"):
                 if not c_name: st.error("Customer Name is required.")
                 else:
                     save_row_to_sheet("Customers", {
-                        "Name": c_name, "GSTIN": c_gst, 
-                        "Address 1": addr1, "Address 2": addr2, "Address 3": addr3, "State": state_val,
-                        "Mobile": mob, "Email": email
+                        "Name": c_name, "GSTIN": c_gst, "Address 1": addr1, "Address 2": addr2, "Address 3": addr3, "State": state_val, "Mobile": mob, "Email": email
                     })
                     st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
 
         with st.expander("📋 Customer Database", expanded=False):
             view_df = fetch_user_data("Customers")
-            if not view_df.empty:
-                st.dataframe(view_df[cust_cols], use_container_width=True)
-            else:
-                st.info("No customers found.")
+            if not view_df.empty: st.dataframe(view_df[cust_cols], use_container_width=True)
+            else: st.info("No customers found.")
 
     elif choice == "Billing Master":
         st.header("🧾 New Invoice")
         df_cust = fetch_user_data("Customers")
-        
-        # --- ROW 1 ---
         c1, c2, c3 = st.columns([2.5, 0.5, 1])
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
         sel_cust_name = c1.selectbox("👤 Select Customer", cust_list, label_visibility="visible")
         c2.write(""); c2.write("")
-        if c2.button("➕", type="primary", help="Add New Customer"):
-             st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+        if c2.button("➕", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
         inv_date_obj = c3.date_input("📅 Invoice Date", format="DD/MM/YYYY") 
         inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
-        
-        # --- SHOW CUSTOMER DETAILS IF SELECTED ---
         if sel_cust_name != "Select" and not df_cust.empty:
             cust_row = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
             c_info_gst = cust_row.get("GSTIN", "N/A")
@@ -466,7 +420,6 @@ def main_app():
             c_info_mob = cust_row.get("Mobile", "N/A")
             st.info(f"**GSTIN:** {c_info_gst} | **Mobile:** {c_info_mob} | **Addr:** {c_info_addr}")
 
-        # --- ROW 2 ---
         st.write("")
         is_ship_diff = st.checkbox("🚢 Shipping Details")
         ship_data = {}
@@ -475,20 +428,13 @@ def main_app():
                 sc1, sc2 = st.columns(2)
                 ship_name = sc1.text_input("Ship Name")
                 ship_gst = sc2.text_input("Ship GSTIN")
-                ship_a1 = st.text_input("Ship Address 1")
-                ship_a2 = st.text_input("Ship Address 2")
-                ship_a3 = st.text_input("Ship Address 3")
-                ship_data = {
-                    "IsShipping": True, "Name": ship_name, "GSTIN": ship_gst, 
-                    "Addr1": ship_a1, "Addr2": ship_a2, "Addr3": ship_a3
-                }
+                ship_a1 = st.text_input("Ship Address 1"); ship_a2 = st.text_input("Ship Address 2"); ship_a3 = st.text_input("Ship Address 3")
+                ship_data = {"IsShipping": True, "Name": ship_name, "GSTIN": ship_gst, "Addr1": ship_a1, "Addr2": ship_a2, "Addr3": ship_a3}
 
-        # --- ROW 3 ---
         st.write("")
         st.markdown("🧾 **Invoice Number**")
         ic1, ic2 = st.columns([1.3, 3]) 
         inv_no = ic1.text_input("Invoice Number", label_visibility="collapsed", placeholder="Enter Inv No")
-        
         df_inv_past = fetch_user_data("Invoices")
         past_str = "No past invoices"
         if not df_inv_past.empty:
@@ -499,29 +445,14 @@ def main_app():
         st.divider()
         st.subheader("📦 Product / Service Details")
 
-        # --- HARD RESET & SAFE TABLE INIT ---
-        required_cols = ["Description", "HSN", "Qty", "UOM", "Rate", "GST Rate"]
-        
-        # Check if table is valid. If NOT valid, completely overwrite it.
-        # This prevents looking for "Qty" inside a malformed table.
-        is_valid_table = False
-        if "items" in st.session_state and isinstance(st.session_state.items, pd.DataFrame):
-            if set(required_cols).issubset(st.session_state.items.columns):
-                is_valid_table = True
-        
-        if not is_valid_table:
-            st.session_state.items = pd.DataFrame([
+        # --- NEW KEY: invoice_items_grid (CLEAN SLATE) ---
+        if "invoice_items_grid" not in st.session_state:
+            st.session_state.invoice_items_grid = pd.DataFrame([
                 {"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}
             ])
 
-        # --- SAFE TYPE CASTING ---
-        # Now we know for sure the columns exist
-        st.session_state.items["Qty"] = pd.to_numeric(st.session_state.items["Qty"], errors='coerce').fillna(0.0)
-        st.session_state.items["Rate"] = pd.to_numeric(st.session_state.items["Rate"], errors='coerce').fillna(0.0)
-        st.session_state.items["GST Rate"] = pd.to_numeric(st.session_state.items["GST Rate"], errors='coerce').fillna(0.0)
-
         edited_items = st.data_editor(
-            st.session_state.items, num_rows="dynamic", use_container_width=True,
+            st.session_state.invoice_items_grid, num_rows="dynamic", use_container_width=True,
             column_config={
                 "Description": st.column_config.TextColumn("Item Name", required=True),
                 "HSN": st.column_config.TextColumn("HSN/SAC Code"),
@@ -529,11 +460,13 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="bill_editor_master_final_v2"
+            }, key="final_invoice_editor"
         )
 
+        # --- CALCULATIONS ON EDITED DATA (NOT SESSION STATE) ---
         valid_items = edited_items[edited_items["Description"] != ""].copy()
-        # Safe calc again just in case new rows are added
+        
+        # Calculate using the output DF directly - Safe & Secure
         valid_items["Qty"] = pd.to_numeric(valid_items["Qty"], errors='coerce').fillna(0)
         valid_items["Rate"] = pd.to_numeric(valid_items["Rate"], errors='coerce').fillna(0)
         valid_items["GST Rate"] = pd.to_numeric(valid_items["GST Rate"], errors='coerce').fillna(0)
@@ -550,12 +483,10 @@ def main_app():
         cust_state = ""
         if sel_cust_name != "Select" and not df_cust.empty:
             c_row = df_cust[df_cust["Name"] == sel_cust_name]
-            if not c_row.empty:
-                cust_state = str(c_row.iloc[0].get("State", "")).strip().lower()
+            if not c_row.empty: cust_state = str(c_row.iloc[0].get("State", "")).strip().lower()
         
         is_inter_state = False
-        if user_state and cust_state and user_state != cust_state:
-            is_inter_state = True
+        if user_state and cust_state and user_state != cust_state: is_inter_state = True
             
         cgst_val = 0.0; sgst_val = 0.0; igst_val = 0.0
         if is_inter_state: igst_val = total_tax_val
@@ -570,7 +501,6 @@ def main_app():
         
         st.divider()
         b1, b2, b3 = st.columns(3)
-        
         if b1.button("Generate Invoice", type="primary", use_container_width=True):
             if sel_cust_name == "Select": st.error("Please Select a Customer")
             elif not inv_no: st.error("Please Enter Invoice Number")
@@ -592,16 +522,14 @@ def main_app():
                 st.download_button("⬇️ Download PDF Invoice", pdf_bytes, f"Invoice_{inv_no}.pdf", "application/pdf", use_container_width=True)
 
         cust_mob = ""
-        if sel_cust_name != "Select" and not df_cust.empty:
-            cust_mob = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Mobile", ""))
+        if sel_cust_name != "Select" and not df_cust.empty: cust_mob = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Mobile", ""))
         if cust_mob:
             wa_msg = f"Hello, Here is your Invoice {inv_no} dated {inv_date_str} for Amount {grand_total}. Thanks!"
             b2.link_button("📱 WhatsApp", get_whatsapp_link(cust_mob, wa_msg), use_container_width=True)
         else: b2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="Customer mobile missing")
 
         cust_email = ""
-        if sel_cust_name != "Select" and not df_cust.empty:
-            cust_email = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Email", ""))
+        if sel_cust_name != "Select" and not df_cust.empty: cust_email = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Email", ""))
         if cust_email:
             mail_sub = f"Invoice {inv_no} from {profile.get('Business Name','')}"
             mail_body = f"Dear Customer,\n\nPlease find attached invoice {inv_no} dated {inv_date_str}.\nTotal Amount: {grand_total}\n\nRegards"
@@ -639,14 +567,10 @@ def main_app():
     elif choice == "Company Profile":
         st.header("⚙️ Company Profile")
         st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
-        
         st.subheader("Tax Configuration")
         col_tax1, col_tax2 = st.columns([1, 2])
         current_gst_val = profile.get("Is GST", "No")
-        gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], 
-                                     index=0 if current_gst_val == "Yes" else 1, 
-                                     horizontal=True)
-        
+        gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], index=0 if current_gst_val == "Yes" else 1, horizontal=True)
         with st.form("edit_profile"):
             with st.expander("🏢 Company Details", expanded=True):
                 c1, c2 = st.columns(2)
@@ -654,12 +578,10 @@ def main_app():
                 tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
                 c3, c4 = st.columns(2)
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
-                template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], 
-                                      index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
+                template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
                 c5, c6 = st.columns(2)
                 mob = c5.text_input("Business Mobile", value=profile.get("Mobile", ""))
                 em = c6.text_input("Business Email", value=profile.get("Email", ""))
-                
                 tax_id_val = ""
                 if gst_selection == "Yes":
                     tax_id_val = st.text_input("GSTIN (e.g. 24ABCDE1234F1Z5)", value=profile.get("GSTIN", ""))
@@ -668,7 +590,6 @@ def main_app():
                     tax_id_val = st.text_input("PAN Number (e.g. ABCDE1234F)", value=profile.get("PAN", ""))
                     pan_val = tax_id_val
                     gstin_val = ""
-
             with st.expander("📍 Address Details", expanded=False):
                 a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
                 a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
@@ -676,7 +597,6 @@ def main_app():
                 pincode = ac1.text_input("Pincode", value=profile.get("Pincode", ""))
                 dist = ac2.text_input("District", value=profile.get("District", ""))
                 state = ac3.text_input("State", value=profile.get("State", ""))
-
             with st.expander("🏦 Bank & Payment Details", expanded=False):
                 bc1, bc2 = st.columns(2)
                 bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
@@ -685,35 +605,27 @@ def main_app():
                 acc_no = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
                 ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
                 upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
-
             if st.form_submit_button("💾 Update Company Profile"):
                 errors = []
-                final_gstin = ""
-                final_pan = ""
-                clean_tax_val = tax_id_val.upper()
-                
+                final_gstin = ""; final_pan = ""; clean_tax_val = tax_id_val.upper()
                 if gst_selection == "Yes":
                     if not is_valid_gstin(clean_tax_val): errors.append("Invalid GSTIN! Format: 24ABCDE1234F1Z5")
                     final_gstin = clean_tax_val
                 else:
                     if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F")
                     final_pan = clean_tax_val
-
                 if acc_no and not acc_no.isdigit(): errors.append("Account Number must contain only digits.")
                 if upi and "@" not in upi: errors.append("Invalid UPI ID (must contain '@').")
-
                 if errors:
                     for e in errors: st.error(e)
                 else:
                     updated_data = {
-                        "Business Name": bn, "Tagline": tag, 
-                        "Mobile": mob, "Email": em, "Template": template,
+                        "Business Name": bn, "Tagline": tag, "Mobile": mob, "Email": em, "Template": template,
                         "Is GST": gst_selection, "GSTIN": final_gstin, "PAN": final_pan,
                         "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
                         "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
                     }
-                    if update_user_profile(updated_data):
-                        st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
+                    if update_user_profile(updated_data): st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
 
 if st.session_state.user_id: main_app()
 else: login_page()
