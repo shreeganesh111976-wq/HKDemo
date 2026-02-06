@@ -47,7 +47,6 @@ def fetch_data(worksheet_name):
                 "Bank Name", "Branch", "Account No", "IFSC", "UPI"
             ]
         elif worksheet_name == "Customers": 
-            # ADDED NEW COLUMNS FOR CUSTOMER MASTER
             cols = ["UserID", "Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
         elif worksheet_name == "Invoices": 
             cols = ["UserID", "Bill No", "Date", "Buyer Name", "Invoice Value", "Taxable", "Items"]
@@ -80,7 +79,6 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
         st.cache_data.clear()
     except Exception as e: st.error(f"Error saving to database: {e}")
 
-# Added bulk save for Import feature
 def save_bulk_data(worksheet_name, new_df_chunk):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
@@ -195,13 +193,8 @@ def get_whatsapp_link(mobile, msg):
 def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
 def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
-
-# --- STRICT GOVT ID VALIDATION ---
-def is_valid_pan(pan):
-    return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
-
-def is_valid_gstin(gstin):
-    return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
+def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
+def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
 def send_otp_email(to_email, otp_code):
     if "your_email" in SENDER_EMAIL:
@@ -215,6 +208,13 @@ def send_otp_email(to_email, otp_code):
         server.login(SENDER_EMAIL, SENDER_PASSWORD); server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
         server.quit(); return True
     except Exception as e: st.error(f"Failed to send email: {e}"); return False
+
+# --- EXCEL HELPER ---
+def to_excel_bytes(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
 
 # --- SESSION STATE ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
@@ -325,70 +325,94 @@ def main_app():
     elif choice == "Customer Master":
         st.header("👥 Customers")
         
-        # --- 1. IMPORT / EXPORT SECTION ---
-        col_imp, col_exp = st.columns(2)
-        with col_exp:
-            # Export Logic
-            cust_df = fetch_user_data("Customers")
-            csv = cust_df.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ Export Customer Data (CSV)", data=csv, file_name="customers.csv", mime="text/csv", use_container_width=True)
+        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION ---
+        st.write("### 📤 Import / Export Data")
+        c_imp1, c_imp2, c_imp3 = st.columns(3)
         
-        with col_imp:
-            # Import Logic
-            uploaded_file = st.file_uploader("⬆️ Import Customers (CSV)", type=["csv"])
+        with c_imp1:
+            # Export Logic (Excel)
+            cust_df = fetch_user_data("Customers")
+            # Filter only useful columns for export
+            export_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
+            final_export = cust_df[export_cols] if not cust_df.empty else pd.DataFrame(columns=export_cols)
+            
+            excel_data = to_excel_bytes(final_export)
+            st.download_button(
+                "⬇️ Download Data (Excel)", 
+                data=excel_data, 
+                file_name="MyCustomers.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
+                use_container_width=True
+            )
+
+        with c_imp2:
+            # Download Template Logic
+            template_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
+            template_df = pd.DataFrame(columns=template_cols)
+            template_bytes = to_excel_bytes(template_df)
+            st.download_button(
+                "📄 Download Import Template", 
+                data=template_bytes, 
+                file_name="Import_Template.xlsx", 
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        with c_imp3:
+            # Import Logic (Excel)
+            uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
             if uploaded_file is not None:
                 try:
-                    imp_df = pd.read_csv(uploaded_file)
-                    if st.button("Confirm Import"):
+                    imp_df = pd.read_excel(uploaded_file)
+                    if st.button("Confirm Import", type="primary"):
                         if save_bulk_data("Customers", imp_df):
                             st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
                 except Exception as e: st.error(f"Error reading file: {e}")
 
         st.divider()
 
-        # --- 2. ADD NEW CUSTOMER SECTION ---
+        # --- 2. ADD NEW CUSTOMER SECTION (NO FORM WRAPPER to fix error) ---
         st.subheader("Add New Customer")
-        with st.form("add_c"):
-            c_name = st.text_input("👤 Customer Name")
-            
-            # GSTIN with Fetch Button (Visual only)
-            col_gst_in, col_gst_btn = st.columns([3, 1])
-            c_gst = col_gst_in.text_input("🏢 GSTIN")
-            col_gst_btn.write("") # Spacer
-            col_gst_btn.write("") # Spacer
-            if col_gst_btn.button("Fetch Details"):
-                st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
+        # Removing st.form to allow the 'Fetch' button to work
+        
+        c_name = st.text_input("👤 Customer Name")
+        
+        # GSTIN with Fetch Button
+        col_gst_in, col_gst_btn = st.columns([3, 1])
+        c_gst = col_gst_in.text_input("🏢 GSTIN")
+        col_gst_btn.write("") # Spacer
+        col_gst_btn.write("") # Spacer
+        if col_gst_btn.button("Fetch Details"):
+            st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
 
-            st.markdown("📍 **Address Details**")
-            addr1 = st.text_input("Address Line 1")
-            addr2 = st.text_input("Address Line 2")
-            addr3 = st.text_input("Address Line 3")
-            
-            st.markdown("📞 **Contact Details**")
-            c1, c2 = st.columns(2)
-            mob = c1.text_input("Mobile")
-            email = c2.text_input("Email")
+        st.markdown("📍 **Address Details**")
+        addr1 = st.text_input("Address Line 1")
+        addr2 = st.text_input("Address Line 2")
+        addr3 = st.text_input("Address Line 3")
+        
+        st.markdown("📞 **Contact Details**")
+        c1, c2 = st.columns(2)
+        mob = c1.text_input("Mobile")
+        email = c2.text_input("Email")
 
-            if st.form_submit_button("Save Customer Data"):
-                if not c_name: st.error("Customer Name is required.")
-                else:
-                    save_row_to_sheet("Customers", {
-                        "Name": c_name, "GSTIN": c_gst, 
-                        "Addr1": addr1, "Addr2": addr2, "Addr3": addr3,
-                        "Mobile": mob, "Email": email
-                    })
-                    st.success("Customer Saved Successfully!"); st.rerun()
+        # Save Button (Regular button now, not form_submit_button)
+        if st.button("Save Customer Data", type="primary"):
+            if not c_name: st.error("Customer Name is required.")
+            else:
+                save_row_to_sheet("Customers", {
+                    "Name": c_name, "GSTIN": c_gst, 
+                    "Addr1": addr1, "Addr2": addr2, "Addr3": addr3,
+                    "Mobile": mob, "Email": email
+                })
+                st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
 
         st.divider()
 
         # --- 3. CUSTOMER DATABASE SECTION ---
         st.subheader("Customer Database")
         display_cols = ["Name", "GSTIN", "Addr1", "Addr2", "Addr3", "Mobile", "Email"]
-        
-        # Ensure columns exist before displaying to avoid errors if sheet is empty
         view_df = fetch_user_data("Customers")
         existing_cols = [c for c in display_cols if c in view_df.columns]
-        
         st.dataframe(view_df[existing_cols], use_container_width=True)
 
     elif choice == "Billing":
