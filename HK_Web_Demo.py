@@ -22,11 +22,10 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
 
 # --- EMAIL CONFIGURATION (MUST FILL THIS) ---
-# Replace with your actual gmail and the App Password you generated
-SENDER_EMAIL = "shreeganesh111976@gmail.com"  # <--- PUT YOUR GMAIL HERE
-SENDER_PASSWORD = "bxsl wvas wkua nkoh"  # <--- PUT YOUR 16-CHAR APP PASSWORD HERE
+SENDER_EMAIL = "your_email@gmail.com"  # <--- PUT YOUR GMAIL HERE
+SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- PUT YOUR APP PASSWORD HERE
 
-# --- SECRETS & CONSTANTS ---
+# --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
 
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
@@ -42,7 +41,13 @@ def fetch_data(worksheet_name):
     except Exception:
         # Default columns if sheet is empty/missing
         if worksheet_name == "Users": 
-            cols = ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "Mobile", "Email", "Addr1", "Addr2"]
+            # ADDED NEW COLUMNS HERE
+            cols = [
+                "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", 
+                "Mobile", "Email", "Template", 
+                "Addr1", "Addr2", "Pincode", "District", "State", 
+                "Bank Name", "Branch", "Account No", "IFSC", "UPI"
+            ]
         elif worksheet_name == "Customers": 
             cols = ["UserID", "Name", "GSTIN", "Mobile", "Address 1"]
         elif worksheet_name == "Invoices": 
@@ -160,6 +165,16 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.setFont("Helvetica-Bold", 10)
     c.drawRightString(500, y_row-20, f"Taxable: {totals['taxable']:.2f}")
     c.drawRightString(500, y_row-35, f"Total: {totals['total']:.2f}")
+    
+    # BANK DETAILS FOOTER
+    if seller.get("Bank Name") and str(seller.get("Bank Name")) != "nan":
+        y_bank = 100
+        c.line(30, y_bank + 15, w-30, y_bank + 15)
+        c.setFont("Helvetica-Bold", 9)
+        c.drawString(40, y_bank, "Bank Details:")
+        c.setFont("Helvetica", 9)
+        c.drawString(110, y_bank, f"{seller.get('Bank Name','')} | A/c: {seller.get('Account No','')} | IFSC: {seller.get('IFSC','')}")
+    
     c.save()
     buffer.seek(0)
     return buffer
@@ -173,8 +188,6 @@ if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
 if "reg_success_msg" not in st.session_state: st.session_state.reg_success_msg = None
-
-# New Session States for OTP
 if "otp_generated" not in st.session_state: st.session_state.otp_generated = None
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
@@ -191,20 +204,16 @@ def is_valid_mobile(mobile):
     return re.match(pattern, mobile) is not None
 
 def send_otp_email(to_email, otp_code):
-    """Sends OTP via SMTP."""
     if "your_email" in SENDER_EMAIL:
         st.error("Setup Error: Sender Email not configured in code.")
         return False
-        
     try:
         msg = MIMEMultipart()
         msg['From'] = SENDER_EMAIL
         msg['To'] = to_email
         msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
-        
         body = f"Hello,\n\nYour One-Time Password (OTP) for registration is: {otp_code}\n\nDo not share this with anyone.\n\nRegards,\nHisaabKeeper Team"
         msg.attach(MIMEText(body, 'plain'))
-        
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
@@ -218,7 +227,6 @@ def send_otp_email(to_email, otp_code):
 
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
-    
     if st.session_state.reg_success_msg:
         st.success(st.session_state.reg_success_msg)
         st.session_state.reg_success_msg = None
@@ -229,34 +237,29 @@ def login_page():
             with st.form("login_form"):
                 user_input = st.text_input("Username")
                 pwd = st.text_input("Password", type="password")
-                
                 if st.form_submit_button("Login", type="primary"):
                     df_users = fetch_data("Users")
                     if "Username" in df_users.columns:
                         df_users["Username"] = df_users["Username"].astype(str)
                         df_users["Password"] = df_users["Password"].astype(str)
                         user_row = df_users[(df_users["Username"] == user_input) & (df_users["Password"] == pwd)]
-                        
                         if not user_row.empty:
                             st.session_state.user_id = str(user_row.iloc[0]["UserID"])
                             st.session_state.user_profile = user_row.iloc[0].to_dict()
                             st.success("Login Successful!"); time.sleep(1); st.rerun()
                         else: st.error("Invalid Username or Password")
                     else: st.error("System Error: Users database is missing columns.")
-
             st.markdown("---")
             col1, col2 = st.columns([0.7, 0.3])
             col1.write("New to HisaabKeeper?")
             if col2.button("Create Account"):
                 st.session_state.auth_mode = "register"
-                st.session_state.otp_generated = None # Reset OTP
+                st.session_state.otp_generated = None
                 st.rerun()
 
     elif st.session_state.auth_mode == "register":
         with st.container():
             st.subheader("Create New Account")
-            
-            # STEP 1: FILL DETAILS & SEND OTP
             if st.session_state.otp_generated is None:
                 with st.form("reg_form"):
                     new_username = st.text_input("Choose Username (Unique)")
@@ -264,10 +267,8 @@ def login_page():
                     bn = st.text_input("Business Name")
                     mob = st.text_input("Mobile Number (10 digits)")
                     em = st.text_input("Email ID")
-                    
                     if st.form_submit_button("Verify Email & Register"):
                         df_users = fetch_data("Users")
-                        
                         if not new_username or not new_pwd or not bn or not mob or not em:
                             st.error("All fields are mandatory.")
                         elif not is_valid_mobile(mob):
@@ -277,24 +278,15 @@ def login_page():
                         elif not df_users.empty and "Username" in df_users.columns and new_username in df_users["Username"].astype(str).values:
                             st.error("Username already taken! Please choose another.")
                         else:
-                            # Generate OTP
                             otp = str(random.randint(100000, 999999))
-                            
-                            # Store temp data
-                            st.session_state.reg_temp_data = {
-                                "Username": new_username, "Password": new_pwd, "Business Name": bn, "Mobile": mob, "Email": em
-                            }
-                            
+                            st.session_state.reg_temp_data = {"Username": new_username, "Password": new_pwd, "Business Name": bn, "Mobile": mob, "Email": em}
                             with st.spinner("Sending OTP..."):
                                 if send_otp_email(em, otp):
                                     st.session_state.otp_generated = otp
                                     st.session_state.otp_email = em
                                     st.toast(f"OTP sent to {em}", icon="📧")
                                     st.rerun()
-                                else:
-                                    st.error("Could not send email. Check internet or SMTP settings.")
-
-            # STEP 2: VERIFY OTP
+                                else: st.error("Could not send email. Check internet or SMTP settings.")
             else:
                 st.info(f"An OTP has been sent to **{st.session_state.otp_email}**")
                 with st.form("otp_form"):
@@ -302,37 +294,27 @@ def login_page():
                     c1, c2 = st.columns(2)
                     verify_btn = c1.form_submit_button("Confirm Registration", type="primary")
                     cancel_btn = c2.form_submit_button("Cancel / Back")
-                    
                     if verify_btn:
                         if user_otp == st.session_state.otp_generated:
-                            # SAVE DATA
                             unique_id = generate_unique_id()
                             final_data = st.session_state.reg_temp_data
                             new_user = {
-                                "UserID": unique_id,
-                                "Username": final_data["Username"],
-                                "Password": final_data["Password"],
-                                "Business Name": final_data["Business Name"],
-                                "Tagline": "", "GSTIN": "",
-                                "Mobile": final_data["Mobile"],
-                                "Email": final_data["Email"],
-                                "Addr1": "", "Addr2": "", "Is GST": "No"
+                                "UserID": unique_id, "Username": final_data["Username"], "Password": final_data["Password"],
+                                "Business Name": final_data["Business Name"], "Tagline": "", "GSTIN": "",
+                                "Mobile": final_data["Mobile"], "Email": final_data["Email"],
+                                "Addr1": "", "Addr2": "", "Pincode": "", "District": "", "State": "", "Is GST": "No",
+                                "Bank Name": "", "Branch": "", "Account No": "", "IFSC": "", "UPI": "", "Template": "Simple"
                             }
                             save_row_to_sheet("Users", new_user)
-                            
-                            # CLEANUP & REDIRECT
                             st.session_state.otp_generated = None
                             st.session_state.reg_temp_data = {}
                             st.session_state.reg_success_msg = f"🎉 Verified! Registration Successful for {final_data['Username']}"
                             st.session_state.auth_mode = "login"
                             st.rerun()
-                        else:
-                            st.error("Incorrect OTP. Please try again.")
-                    
+                        else: st.error("Incorrect OTP.")
                     if cancel_btn:
                         st.session_state.otp_generated = None
                         st.rerun()
-
             st.markdown("---")
             if st.button("Back to Login"):
                 st.session_state.auth_mode = "login"
@@ -341,7 +323,10 @@ def login_page():
 
 # --- MAIN APP ---
 def main_app():
-    profile = st.session_state.user_profile
+    # CLEAN THE PROFILE DATA (Remove nan)
+    raw_profile = st.session_state.user_profile
+    profile = {k: (v if str(v) != 'nan' else '') for k, v in raw_profile.items()}
+    
     st.sidebar.title(f"🏢 {profile.get('Business Name', 'My Business')}")
     st.sidebar.caption(f"User: {profile.get('Username', 'User')}")
     
@@ -392,9 +377,7 @@ def main_app():
             st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
 
         edited_items = st.data_editor(
-            st.session_state.items, 
-            num_rows="dynamic", 
-            use_container_width=True,
+            st.session_state.items, num_rows="dynamic", use_container_width=True,
             column_config={
                 "Description": st.column_config.TextColumn("Description", required=True),
                 "Qty": st.column_config.NumberColumn("Qty", required=True, default=1.0),
@@ -453,22 +436,65 @@ def main_app():
     elif choice == "Profile":
         st.header("⚙️ Company Profile")
         st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
+        
         with st.form("edit_profile"):
-            c1, c2 = st.columns(2)
-            bn = st.text_input("Business Name", value=profile.get("Business Name", ""))
-            tag = st.text_input("Tagline", value=profile.get("Tagline", ""))
-            c3, c4 = st.columns(2)
-            gstin = st.text_input("GSTIN", value=profile.get("GSTIN", ""))
-            is_gst = st.selectbox("Registered GST?", ["Yes", "No"], index=0 if profile.get("Is GST") == "Yes" else 1)
-            c5, c6 = st.columns(2)
-            mob = st.text_input("Mobile", value=profile.get("Mobile", ""))
-            em = st.text_input("Email", value=profile.get("Email", ""))
-            addr1 = st.text_input("Address 1", value=profile.get("Addr1", ""))
-            addr2 = st.text_input("Address 2", value=profile.get("Addr2", ""))
-            if st.form_submit_button("💾 Update Profile"):
-                updated_data = {"Business Name": bn, "Tagline": tag, "GSTIN": gstin, "Is GST": is_gst, "Mobile": mob, "Email": em, "Addr1": addr1, "Addr2": addr2}
+            # --- SECTION 1: Company Details ---
+            with st.expander("🏢 Company Details", expanded=True):
+                c1, c2 = st.columns(2)
+                bn = c1.text_input("Business Name", value=profile.get("Business Name", ""))
+                tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
+                
+                c3, c4 = st.columns(2)
+                # Logo Upload (UI Only for now)
+                logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
+                template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], 
+                                      index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
+                
+                c5, c6 = st.columns(2)
+                mob = c5.text_input("Business Mobile", value=profile.get("Mobile", ""))
+                em = c6.text_input("Business Email", value=profile.get("Email", ""))
+                
+                c7, c8 = st.columns(2)
+                # Logic for GST Selection Index
+                gst_opts = ["Select", "Yes", "No"]
+                curr_gst = profile.get("Is GST", "Select")
+                gst_idx = gst_opts.index(curr_gst) if curr_gst in gst_opts else 0
+                
+                is_gst = c7.selectbox("Registered in GST?", gst_opts, index=gst_idx)
+                gstin = c8.text_input("GSTIN", value=profile.get("GSTIN", ""))
+
+            # --- SECTION 2: Address Details ---
+            with st.expander("📍 Address Details", expanded=False):
+                a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
+                a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
+                
+                ac1, ac2, ac3 = st.columns(3)
+                pincode = ac1.text_input("Pincode", value=profile.get("Pincode", ""))
+                dist = ac2.text_input("District", value=profile.get("District", ""))
+                state = ac3.text_input("State", value=profile.get("State", ""))
+
+            # --- SECTION 3: Bank & Payments ---
+            with st.expander("🏦 Bank & Payment Details", expanded=False):
+                bc1, bc2 = st.columns(2)
+                bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
+                branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
+                
+                bc3, bc4 = st.columns(2)
+                acc_no = bc3.text_input("Account Number", value=profile.get("Account No", ""))
+                ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
+                
+                upi = st.text_input("UPI ID (e.g. mobile@upi)", value=profile.get("UPI", ""))
+
+            if st.form_submit_button("💾 Update Company Profile"):
+                updated_data = {
+                    "Business Name": bn, "Tagline": tag, 
+                    "Mobile": mob, "Email": em, "Template": template,
+                    "Is GST": is_gst, "GSTIN": gstin,
+                    "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
+                    "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
+                }
                 if update_user_profile(updated_data):
-                    st.success("Profile Updated!"); time.sleep(1); st.rerun()
+                    st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
 
 if st.session_state.user_id: main_app()
 else: login_page()
