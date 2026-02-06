@@ -325,18 +325,19 @@ def main_app():
     elif choice == "Customer Master":
         st.header("👥 Customers")
         
-        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION ---
+        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION (Updated Layout) ---
         st.write("### 📤 Import / Export Data")
-        c_imp1, c_imp2, c_imp3 = st.columns(3)
         
-        with c_imp1:
+        # CHANGED: 2 Columns instead of 3 (1: Stacked Buttons, 2: Upload)
+        c_downloads, c_upload = st.columns([1, 2])
+        
+        with c_downloads:
             # Export Logic (Excel)
             cust_df = fetch_user_data("Customers")
-            # Filter only useful columns for export
             export_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
             final_export = cust_df[export_cols] if not cust_df.empty else pd.DataFrame(columns=export_cols)
-            
             excel_data = to_excel_bytes(final_export)
+            
             st.download_button(
                 "⬇️ Download Data (Excel)", 
                 data=excel_data, 
@@ -345,11 +346,14 @@ def main_app():
                 use_container_width=True
             )
 
-        with c_imp2:
+            # Spacer
+            st.write("")
+
             # Download Template Logic
             template_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
             template_df = pd.DataFrame(columns=template_cols)
             template_bytes = to_excel_bytes(template_df)
+            
             st.download_button(
                 "📄 Download Import Template", 
                 data=template_bytes, 
@@ -358,7 +362,7 @@ def main_app():
                 use_container_width=True
             )
 
-        with c_imp3:
+        with c_upload:
             # Import Logic (Excel)
             uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
             if uploaded_file is not None:
@@ -371,17 +375,15 @@ def main_app():
 
         st.divider()
 
-        # --- 2. ADD NEW CUSTOMER SECTION (NO FORM WRAPPER to fix error) ---
+        # --- 2. ADD NEW CUSTOMER SECTION ---
         st.subheader("Add New Customer")
-        # Removing st.form to allow the 'Fetch' button to work
-        
         c_name = st.text_input("👤 Customer Name")
         
         # GSTIN with Fetch Button
         col_gst_in, col_gst_btn = st.columns([3, 1])
         c_gst = col_gst_in.text_input("🏢 GSTIN")
-        col_gst_btn.write("") # Spacer
-        col_gst_btn.write("") # Spacer
+        col_gst_btn.write("") 
+        col_gst_btn.write("") 
         if col_gst_btn.button("Fetch Details"):
             st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
 
@@ -395,7 +397,6 @@ def main_app():
         mob = c1.text_input("Mobile")
         email = c2.text_input("Email")
 
-        # Save Button (Regular button now, not form_submit_button)
         if st.button("Save Customer Data", type="primary"):
             if not c_name: st.error("Customer Name is required.")
             else:
