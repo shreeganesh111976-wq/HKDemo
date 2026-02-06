@@ -24,16 +24,16 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    /* Font Correction to match Streamlit Native */
-    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; font-family: 'Source Sans Pro', sans-serif; }
+    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
     
+    /* SUMMARY BOX STYLING - MATCHING STREAMLIT FONT */
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
-        border-radius: 10px; 
+        border-radius: 8px; 
         border: 1px solid #e0e0e0; 
         margin-top: 20px;
-        font-family: 'Source Sans Pro', sans-serif; /* FORCE FONT MATCH */
+        font-family: "Source Sans Pro", sans-serif; /* FORCE FONT MATCH */
     }
     
     .summary-row {
@@ -41,8 +41,8 @@ st.markdown("""
         justify-content: space-between;
         margin-bottom: 8px;
         font-size: 16px;
-        color: #444;
-        font-family: 'Source Sans Pro', sans-serif;
+        color: #333;
+        font-family: "Source Sans Pro", sans-serif;
     }
     
     .total-row { 
@@ -54,10 +54,10 @@ st.markdown("""
         margin-top: 10px; 
         padding-top: 10px; 
         color: #000;
-        font-family: 'Source Sans Pro', sans-serif;
+        font-family: "Source Sans Pro", sans-serif;
     }
     
-    /* Button width fix */
+    /* Button Width Fix */
     .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
@@ -88,6 +88,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": [
@@ -474,21 +475,26 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 55% Customer, 15% Add Button, 30% Date = 100% total width
-        c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="bottom")
+        # 60% Customer, 15% Add Button, 25% Date = 100% total width
+        c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
+            # Add spacer line
+            st.write("") 
             cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
             def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
             # Button aligned to bottom to sit flat with input boxes
+            st.write("") 
+            st.write("") 
             if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
+            st.write("") # Spacer line
             inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
             inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
@@ -512,6 +518,8 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
+        st.write("") # Spacer line
+        
         # Narrow column for Invoice No to match your screenshot
         ic1, ic2 = st.columns([0.4, 0.6]) 
         
@@ -586,7 +594,7 @@ def main_app():
             gst_label = "IGST" if is_inter_state else "CGST+SGST"
             gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
             
-            # NO INDENTATION HERE TO FIX "RAW HTML" BUG
+            # NO INDENTATION HERE TO FIX "RAW HTML" BUG & MATCH FONT
             html_content = f"""<div class='bill-summary-box'>
 <div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
 <div class='summary-row'><span>{gst_label}:</span><span>{gst_val_fmt}</span></div>
