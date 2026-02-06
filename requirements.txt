@@ -5,3 +5,4 @@ reportlab
 altair
 st-gsheets-connection
 qrcode[pil]
+xlsxwriter
