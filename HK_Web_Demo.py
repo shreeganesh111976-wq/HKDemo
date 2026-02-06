@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import time
 import io
+import os
 import urllib.parse
 import random
 import string
@@ -14,6 +15,8 @@ from datetime import date, datetime
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
+from reportlab.lib.colors import HexColor
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
@@ -52,6 +55,8 @@ SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
 
 # --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
+LOGO_FILE = "logo.png"  # Placeholder for file path logic
+SIGNATURE_FILE = "signature.png" # Placeholder for file path logic
 
 # --- FULL STATE CODES (GST MAPPING) ---
 STATE_CODES = {
@@ -82,6 +87,10 @@ def format_indian_currency(amount):
     else: formatted_integer = integer_part
     return f"₹ {formatted_integer}.{parts[1]}"
 
+# --- HELPER: SAVE DIRECTORY (Placeholder for compatibility) ---
+def get_save_directory(profile_data, is_letterhead=False):
+    return "invoices_letterhead" if is_letterhead else "invoices_main"
+
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
 def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
@@ -90,184 +99,425 @@ def fetch_data(worksheet_name):
     """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
-        "Users": [
-            "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
-            "Mobile", "Email", "Template", 
-            "Addr1", "Addr2", "Pincode", "District", "State", 
-            "Bank Name", "Branch", "Account No", "IFSC", "UPI"
-        ],
-        "Customers": [
-            "UserID", "Name", "GSTIN", 
-            "Address 1", "Address 2", "Address 3", "State", 
-            "Mobile", "Email"
-        ],
-        "Invoices": [
-            "UserID", "Bill No", "Date", "Buyer Name", "Items", 
-            "Total Taxable", "CGST", "SGST", "IGST", "Grand Total", 
-            "Ship Name", "Ship GSTIN", "Ship Addr1", "Ship Addr2", "Ship Addr3"
-        ],
+        "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
+        "Customers": ["UserID", "Name", "GSTIN", "Address 1", "Address 2", "Address 3", "State", "Mobile", "Email"],
+        "Invoices": ["UserID", "Bill No", "Date", "Buyer Name", "Items", "Total Taxable", "CGST", "SGST", "IGST", "Grand Total", "Ship Name", "Ship GSTIN", "Ship Addr1", "Ship Addr2", "Ship Addr3"],
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
     }
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         if worksheet_name in schema:
-            expected_cols = schema[worksheet_name]
-            for col in expected_cols:
+            for col in schema[worksheet_name]:
                 if col not in df.columns: df[col] = ""
-            df = df[expected_cols]
+            df = df[schema[worksheet_name]]
         return df
-    except Exception:
-        cols = schema.get(worksheet_name, [])
-        return pd.DataFrame(columns=cols)
+    except: return pd.DataFrame(columns=schema.get(worksheet_name, []))
 
 def fetch_user_data(worksheet_name):
     if not st.session_state.get("user_id"): return pd.DataFrame()
     df = fetch_data(worksheet_name)
     if "UserID" in df.columns:
-        df["UserID"] = df["UserID"].astype(str)
         return df[df["UserID"] == str(st.session_state["user_id"])]
     return df
 
 def save_row_to_sheet(worksheet_name, new_row_dict):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
-    if "UserID" not in new_row_dict and worksheet_name != "Users":
-        new_row_dict["UserID"] = st.session_state["user_id"]
+    if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
-    if df.empty: updated_df = new_df
-    else: updated_df = pd.concat([df, new_df], ignore_index=True)
+    updated_df = pd.concat([df, new_df], ignore_index=True) if not df.empty else new_df
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
-    except Exception as e: st.error(f"Error saving to database: {e}")
+    except Exception as e: st.error(f"Error: {e}")
 
 def save_bulk_data(worksheet_name, new_df_chunk):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
-    if "UserID" not in new_df_chunk.columns:
-        new_df_chunk["UserID"] = st.session_state["user_id"]
-    else:
-        new_df_chunk["UserID"] = new_df_chunk["UserID"].fillna(st.session_state["user_id"])
-    if df.empty: updated_df = new_df_chunk
-    else: updated_df = pd.concat([df, new_df_chunk], ignore_index=True)
+    if "UserID" not in new_df_chunk.columns: new_df_chunk["UserID"] = st.session_state["user_id"]
+    else: new_df_chunk["UserID"] = new_df_chunk["UserID"].fillna(st.session_state["user_id"])
+    updated_df = pd.concat([df, new_df_chunk], ignore_index=True) if not df.empty else new_df_chunk
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"Error saving bulk data: {e}")
+        st.error(f"Error: {e}")
         return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
     df = fetch_data("Users")
-    df["UserID"] = df["UserID"].astype(str)
-    current_uid = str(st.session_state["user_id"])
-    idx = df[df["UserID"] == current_uid].index
+    idx = df[df["UserID"] == str(st.session_state["user_id"])].index
     if not idx.empty:
-        for key, value in updated_profile_dict.items():
-            df.at[idx[0], key] = value
+        for k, v in updated_profile_dict.items(): df.at[idx[0], k] = v
         try:
             conn.update(worksheet="Users", data=df)
-            st.cache_data.clear()
             st.session_state.user_profile = df.iloc[idx[0]].to_dict()
             return True
-        except Exception as e:
-            st.error(f"Failed to update profile: {e}")
-            return False
+        except Exception as e: st.error(f"Error: {e}"); return False
     return False
 
-# --- PDF GENERATOR ---
-def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_details=None):
-    buffer = io.BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    w, h = A4
-    c.setFont("Helvetica-Bold", 18)
-    c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
-    c.setFont("Helvetica", 10)
-    c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
-    y = h-80
-    if seller.get('Is GST') == 'Yes' and seller.get('GSTIN'): 
-        c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
-    elif seller.get('PAN'):
-        c.drawCentredString(w/2, y, f"PAN: {seller.get('PAN')}"); y-=12
-    addr = f"{seller.get('Addr1','')}, {seller.get('Addr2','')}, {seller.get('State','')}"
-    c.drawCentredString(w/2, y, addr); y-=12
-    c.drawCentredString(w/2, y, f"M: {seller.get('Mobile','')} | E: {seller.get('Email','')}")
-    c.line(30, y-10, w-30, y-10)
+# --- PDF GENERATION LOGIC (MULTI-PAGE FIXED & OVERLAP FIXED & SHIP TO & UOM) ---
+def get_invoice_paths_dual(date_obj, invoice_no, party_name, profile_data):
+    year = date_obj.year; month = date_obj.month
+    if month < 4: fy = f"FY {year-1}-{str(year)[-2:]}"
+    else: fy = f"FY {year}-{str(year+1)[-2:]}"
+    month_name = date_obj.strftime("%B")
     
-    y_bill = y-40
-    c.setFont("Helvetica-Bold", 10); c.drawString(40, y_bill, "Bill To:")
-    c.setFont("Helvetica", 10)
-    c.drawString(40, y_bill-15, str(buyer.get('Name','')))
-    c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
-    c.drawString(40, y_bill-45, f"Addr: {buyer.get('Address 1','')}, {buyer.get('State','')}")
+    # 1. Main Path
+    base_dir_main = get_save_directory(profile_data, is_letterhead=False)
+    save_path_main = os.path.join(base_dir_main, fy, f"{month_name} {year}")
+    os.makedirs(save_path_main, exist_ok=True)
+    
+    # 2. Letterhead Path
+    base_dir_lh = get_save_directory(profile_data, is_letterhead=True)
+    save_path_lh = os.path.join(base_dir_lh, fy, f"{month_name} {year}")
+    os.makedirs(save_path_lh, exist_ok=True)
+    
+    safe_inv = invoice_no.replace("/", "_").replace("\\", "_")
+    safe_name = "".join(c for c in party_name if c.isalnum() or c in " ._").rstrip()
+    filename = f"{safe_inv}_{safe_name}.pdf"
+    
+    return os.path.join(save_path_main, filename), os.path.join(save_path_lh, filename)
 
-    if ship_details and ship_details.get("IsShipping"):
-        c.setFont("Helvetica-Bold", 10); c.drawString(200, y_bill, "Ship To:")
-        c.setFont("Helvetica", 10)
-        c.drawString(200, y_bill-15, str(ship_details.get('Name','')))
-        c.drawString(200, y_bill-30, f"GSTIN: {ship_details.get('GSTIN','')}")
-        c.drawString(200, y_bill-45, f"Addr: {ship_details.get('Addr1','')}")
+def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
+    # This function draws the top section and returns the Y-coordinate where the table should start
+    
+    # --- HEADER SECTION ---
+    if not is_letterhead:
+        if theme == 'Formal':
+            c.setLineWidth(3); c.rect(20, h-160, w-40, 140) 
+            c.setLineWidth(1)
 
-    c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
-    c.setFont("Helvetica", 10)
-    c.drawString(400, y_bill-15, f"No: {inv_no}")
-    c.drawString(400, y_bill-30, f"Date: {inv_date}")
-    
-    y_table = y_bill - 70
-    c.setFont("Helvetica-Bold", 9)
-    headers = ["Item", "HSN", "Qty", "UOM", "Rate", "GST%", "Total"]
-    x_positions = [40, 200, 250, 300, 350, 400, 450]
-    for i, h_text in enumerate(headers): c.drawString(x_positions[i], y_table, h_text)
-    c.line(30, y_table-5, w-30, y_table-5)
-    
-    y_row = y_table - 20
-    c.setFont("Helvetica", 9)
-    for i in items:
-        name = str(i.get('Description', 'Item'))[:25]
-        hsn = str(i.get('HSN', ''))
-        qty = str(i.get('Qty', 0))
-        uom = str(i.get('UOM', ''))
-        rate = f"{float(i.get('Rate', 0)):.2f}"
-        gst_rate = f"{float(i.get('GST Rate', 0))}%"
-        base = float(i.get('Qty', 0)) * float(i.get('Rate', 0))
-        tax_amt = base * (float(i.get('GST Rate', 0))/100)
-        total_row = base + tax_amt
+        if os.path.exists(LOGO_FILE):
+            try:
+                logo = ImageReader(LOGO_FILE)
+                c.drawImage(logo, 30, h-100, width=2.0*inch, height=1.0*inch, mask='auto', preserveAspectRatio=True)
+            except: pass
+
+        center_x = (w / 2) + 20 
+        c.setFont(font_header, 18)
+        c.drawCentredString(center_x, h-50, seller.get('Business Name', 'Unknown Firm'))
         
-        c.drawString(40, y_row, name)
-        c.drawString(200, y_row, hsn)
-        c.drawString(250, y_row, qty)
-        c.drawString(300, y_row, uom)
-        c.drawString(350, y_row, rate)
-        c.drawString(400, y_row, gst_rate)
-        c.drawString(450, y_row, f"{total_row:.2f}")
-        y_row -= 15
-        if y_row < 50: c.showPage(); y_row = h - 50
+        if seller.get('Tagline'):
+            c.setFont(font_body, 10)
+            c.drawCentredString(center_x, h-65, seller.get('Tagline'))
 
-    c.line(30, y_row+5, w-30, y_row+5)
-    c.setFont("Helvetica-Bold", 10)
-    y_total = y_row - 20
-    c.drawRightString(500, y_total, f"Taxable Value: {totals['taxable']:.2f}"); y_total -= 15
-    if totals['cgst'] > 0:
-        c.drawRightString(500, y_total, f"CGST: {totals['cgst']:.2f}"); y_total -= 15
-        c.drawRightString(500, y_total, f"SGST: {totals['sgst']:.2f}"); y_total -= 15
-    if totals['igst'] > 0:
-        c.drawRightString(500, y_total, f"IGST: {totals['igst']:.2f}"); y_total -= 15
-    c.setFont("Helvetica-Bold", 12)
-    c.drawRightString(500, y_total-10, f"Grand Total: ₹ {totals['total']:.2f}")
+        c.setFont(font_body, 9)
+        y_contact = h-80
+        
+        if seller.get('Is GST', 'No') == 'Yes':
+            if seller.get('GSTIN'):
+                c.drawCentredString(center_x, y_contact, f"GSTIN: {seller.get('GSTIN', '')}")
+                y_contact -= 12
+        else:
+            if seller.get('PAN'):
+                c.drawCentredString(center_x, y_contact, f"PAN: {seller.get('PAN', '')}")
+                y_contact -= 12
+        
+        c.drawCentredString(center_x, y_contact, seller.get('Addr1', ''))
+        c.drawCentredString(center_x, y_contact-12, seller.get('Addr2', ''))
+        c.drawCentredString(center_x, y_contact-24, f"M: {seller.get('Mobile', '')} | E: {seller.get('Email', '')}")
     
-    if seller.get("Bank Name") and str(seller.get("Bank Name")) != "nan":
-        y_bank = 100
-        c.line(30, y_bank + 15, w-30, y_bank + 15)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(40, y_bank, "Bank Details:")
-        c.setFont("Helvetica", 9)
-        c.drawString(110, y_bank, f"{seller.get('Bank Name','')} | A/c: {seller.get('Account No','')} | IFSC: {seller.get('IFSC','')}")
+    title_text = "TAX INVOICE" if seller.get('Is GST', 'No') == 'Yes' else "INVOICE"
+    c.setFont(font_header, 14)
+    c.drawCentredString(w/2, h-140, title_text)
+    
+    if theme != 'Modern' and not is_letterhead:
+        c.line(30, h-145, w-30, h-145)
+    
+    # --- BILL TO SECTION ---
+    y = h-170
+    
+    # Check for Ship To
+    ship_data = buyer.get('Shipping', {})
+    
+    # Draw "Bill To"
+    c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
+    c.setFont(font_body, 10)
+    c.drawString(40, y-15, buyer['Name'])
+    
+    if seller.get('Is GST', 'No') == 'Yes':
+        c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
+        addr_start_y = y-45
+    else:
+        addr_start_y = y-30
+
+    c.drawString(40, addr_start_y, f"{buyer.get('Address 1', '')}")
+    if buyer.get('Address 2'):
+        addr_start_y -= 12
+        c.drawString(40, addr_start_y, f"{buyer.get('Address 2', '')}")
+    if buyer.get('Address 3'):
+        addr_start_y -= 12
+        c.drawString(40, addr_start_y, f"{buyer.get('Address 3', '')}")
+    
+    # Added Mobile/Email Line as requested to fill space
+    addr_start_y -= 12
+    c.drawString(40, addr_start_y, f"M: {buyer.get('Mobile', '')}  E: {buyer.get('Email', '')}")
+
+    # Draw "Ship To" if exists
+    if ship_data:
+        x_ship = 250
+        c.setFont(font_header, 10); c.drawString(x_ship, y, "Ship To:")
+        c.setFont(font_body, 10)
+        c.drawString(x_ship, y-15, ship_data.get('Name', ''))
+        
+        if seller.get('Is GST', 'No') == 'Yes':
+            c.drawString(x_ship, y-30, f"GSTIN: {ship_data.get('GSTIN', '')}")
+            s_addr_y = y-45
+        else:
+            s_addr_y = y-30
+        
+        c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr1', '')}")
+        if ship_data.get('Addr2'):
+            s_addr_y -= 12
+            c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr2', '')}")
+        if ship_data.get('Addr3'):
+            s_addr_y -= 12
+            c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr3', '')}")
+
+    # Invoice Details (Moved slightly right if Shipping exists, or keep at far right)
+    x_inv = 400
+    c.setFont(font_header, 10); c.drawString(x_inv, y, "Invoice Details:")
+    c.setFont(font_body, 10)
+    c.drawString(x_inv, y-15, f"Inv No: {inv_no}")
+    c.drawString(x_inv, y-30, f"Date: {buyer['Date']}")
+    if seller.get('Is GST', 'No') == 'Yes':
+        pos_code = buyer.get('POS Code', '24')
+        c.drawString(x_inv, y-45, f"POS: {pos_code}-{STATE_CODES.get(pos_code, '')}")
+
+    # FIX: Return a lower Y value to prevent overlap with address
+    return h - 280 
+
+def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
+    foot_y = 130 
+    c.line(30, foot_y + 90, w-30, foot_y + 90)
+    
+    c.setFont(font_header, 10); c.drawString(40, foot_y+75, "Bank Details:")
+    c.setFont(font_body, 9)
+    c.drawString(40, foot_y+60, f"Bank: {seller.get('Bank Name','')}")
+    if seller.get('Branch Name'):
+        c.drawString(40, foot_y+48, f"Branch: {seller.get('Branch Name','')}")
+        c.drawString(40, foot_y+36, f"A/c: {seller.get('Account No','')}")
+        c.drawString(40, foot_y+24, f"IFSC: {seller.get('IFSC','')}")
+    else:
+        c.drawString(40, foot_y+48, f"A/c: {seller.get('Account No','')}")
+        c.drawString(40, foot_y+36, f"IFSC: {seller.get('IFSC','')}")
+    
+    sign_y = foot_y + 50 # Moved UP
+    c.drawRightString(w-40, sign_y, f"For, {seller.get('Business Name', '')}")
+    
+    # INSERT SIGNATURE
+    if os.path.exists(SIGNATURE_FILE):
+        try:
+            sig_img = ImageReader(SIGNATURE_FILE)
+            # Increased height and adjusted Y to fit in wider gap
+            c.drawImage(sig_img, w-160, sign_y-55, width=1.4*inch, height=0.7*inch, mask='auto', preserveAspectRatio=True)
+        except: pass
+
+    # Moved "Authorized Signatory" DOWN to create gap
+    c.drawRightString(w-40, sign_y-60, "Authorized Signatory")
+    
+    term_y = 50
+    c.setFont(font_body, 7)
+    terms = ["(1) We declare that this invoice shows the actual price of the goods/services described.", "(2) Subject to Local Jurisdiction.", "(3) Our responsibility ceases as soon as goods are delivered."]
+    for term in terms: c.drawString(40, term_y, term); term_y -= 10
+    
+    # --- PROMOTIONAL FOOTER ---
+    c.setFillColor(colors.grey)
+    c.setFont(font_body, 7)
+    footer_msg = "This document is generated using HisaabKeeper to get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whats app us on +91 6353953790"
+    c.drawCentredString(w/2, 15, footer_msg)
+    c.setFillColor(colors.black)
+
+def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False):
+    c = canvas.Canvas(path, pagesize=A4)
+    w, h = A4 
+    
+    theme = seller.get('Template', 'Simple') # Changed 'Theme' to 'Template' to match Profile
+    
+    # Fonts & Colors
+    if theme == 'Modern': 
+        font_header = "Helvetica-Bold"; font_body = "Helvetica"
+        accent_color = HexColor('#2C3E50'); text_color_head = colors.white; grid_color = colors.lightgrey
+    elif theme == 'Formal':
+        font_header = "Times-Bold"; font_body = "Times-Roman"
+        accent_color = colors.white; text_color_head = colors.black; grid_color = colors.black
+    else: 
+        font_header = "Helvetica-Bold"; font_body = "Helvetica"
+        accent_color = colors.grey; text_color_head = colors.whitesmoke; grid_color = colors.black
+
+    # --- 1. PREPARE MAIN TABLE DATA ---
+    is_gst_bill = seller.get('Is GST', 'No') == 'Yes'
+    if is_gst_bill:
+        header = ["Sr.\nNo.", "Description", "HSN/SAC", "Qty", "UOM", "Rate", "Amount"]
+        col_widths = [0.5*inch, 2.6*inch, 1.0*inch, 0.8*inch, 0.6*inch, 1.0*inch, 1.2*inch]
+        span_cols = 5
+    else:
+        header = ["Sr.\nNo.", "Description", "Qty", "UOM", "Rate", "Amount"]
+        col_widths = [0.5*inch, 3.6*inch, 0.8*inch, 0.6*inch, 1.0*inch, 1.2*inch]
+        span_cols = 4
+
+    data = [header]
+    for i, item in enumerate(items, 1):
+        amt = item['Qty'] * item['Rate']
+        desc = str(item['Description']).replace('\n', ' ') 
+        
+        if is_gst_bill:
+            data.append([str(i), desc, str(item.get('HSN', '')), f"{item['Qty']:.2f}", str(item.get('UOM', '')), f"{item['Rate']:.2f}", f"{amt:.2f}"])
+        else:
+            data.append([str(i), desc, f"{item['Qty']:.2f}", str(item.get('UOM', '')), f"{item['Rate']:.2f}", f"{amt:.2f}"])
+    
+    summary_start = len(data)
+    if is_gst_bill:
+        data.append(['Taxable Value', '', '', '', '', '', f"{totals['taxable']:.2f}"])
+        if totals.get('is_intra', True): # Safe access
+            data.append(['Add: CGST', '', '', '', '', '', f"{totals['cgst']:.2f}"])
+            data.append(['Add: SGST', '', '', '', '', '', f"{totals['sgst']:.2f}"])
+        else:
+            data.append(['Add: IGST', '', '', '', '', '', f"{totals['igst']:.2f}"])
+    
+    data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
+    
+    # Styles
+    last_col_idx = len(header) - 1
+    style_cmds = [
+        ('FONTNAME', (0,0), (-1,-1), font_body),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
+        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('GRID', (0,0), (-1,-1), 0.5, grid_color)
+    ]
+
+    if theme == 'Modern':
+        style_cmds.extend([
+            ('BACKGROUND', (0,0), (-1,0), accent_color),
+            ('TEXTCOLOR', (0,0), (-1,0), text_color_head),
+            ('FONTNAME', (0,0), (-1,0), font_header),
+            ('FONTNAME', (0, summary_start), (-1, -1), font_header),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.whitesmoke),
+        ])
+    
+    for i in range(summary_start, len(data)): 
+        style_cmds.append(('SPAN', (0,i), (span_cols,i)))
+    
+    main_table = Table(data, colWidths=col_widths)
+    main_table.setStyle(TableStyle(style_cmds))
+
+    # --- 2. PREPARE HSN TABLE DATA (IF GST) ---
+    hsn_table = None
+    if is_gst_bill:
+        tax_summary = {}
+        for item in items:
+            hsn_code = str(item.get('HSN', ''))
+            gst_rate = float(item.get('GST Rate', 0)) # Fixed key name
+            taxable_val = float(item['Qty']) * float(item['Rate'])
+            key = (hsn_code, gst_rate)
+            if key not in tax_summary: tax_summary[key] = {'taxable': 0.0, 'cgst': 0.0, 'sgst': 0.0, 'igst': 0.0, 'total': 0.0}
+            tax_summary[key]['taxable'] += taxable_val
+            if totals.get('is_intra', True):
+                c_val = taxable_val * (gst_rate / 2 / 100); s_val = taxable_val * (gst_rate / 2 / 100); i_val = 0
+            else:
+                c_val = 0; s_val = 0; i_val = taxable_val * (gst_rate / 100)
+            tax_summary[key]['cgst'] += c_val; tax_summary[key]['sgst'] += s_val; tax_summary[key]['igst'] += i_val; tax_summary[key]['total'] += (taxable_val + c_val + s_val + i_val)
+        
+        hsn_data = [['HSN/SAC', 'Rate', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total']]
+        t_taxable = 0; t_grand = 0; t_cgst=0; t_sgst=0; t_igst=0
+        for key in sorted(tax_summary.keys(), key=lambda x: x[0]):
+            vals = tax_summary[key]
+            hsn_data.append([str(key[0]), f"{key[1]}%", f"{vals['taxable']:.2f}", f"{vals['cgst']:.2f}", f"{vals['sgst']:.2f}", f"{vals['igst']:.2f}", f"{vals['total']:.2f}"])
+            t_taxable += vals['taxable']; t_grand += vals['total']; t_cgst += vals['cgst']; t_sgst += vals['sgst']; t_igst += vals['igst']
+        hsn_data.append(['Total', '', f"{t_taxable:.2f}", f"{t_cgst:.2f}", f"{t_sgst:.2f}", f"{t_igst:.2f}", f"{t_grand:.2f}"])
+        
+        hsn_table = Table(hsn_data, colWidths=[1.2*inch, 0.8*inch, 1.2*inch, 1.0*inch, 1.0*inch, 1.0*inch, 1.2*inch])
+        hsn_table.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (-1,-1), font_body), ('FONTSIZE', (0,0), (-1,-1), 8), ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey), ('BACKGROUND', (0,0), (-1,0), colors.whitesmoke),
+            ('FONTNAME', (0,0), (-1,0), font_header), ('FONTNAME', (0, -1), (-1, -1), font_header)
+        ]))
+
+    # --- 3. CALCULATE PAGES ---
+    # Metrics - Header Buffer 
+    header_bottom_y = h - 280 
+    footer_height = 230 
+    usable_height = header_bottom_y - footer_height
+    
+    # Split Main Table
+    table_parts = []
+    current_data = main_table
+    while True:
+        w_t, h_t = current_data.wrap(w, h)
+        if h_t <= usable_height:
+            table_parts.append(current_data)
+            break
+        else:
+            result = current_data.split(w, usable_height)
+            if len(result) == 2:
+                table_parts.append(result[0])
+                current_data = result[1]
+            else:
+                table_parts.append(current_data) # Failsafe
+                break
+    
+    # Calculate Total Pages (Checking if HSN needs a new page)
+    total_pages = len(table_parts)
+    hsn_needs_new_page = False
+    
+    if hsn_table:
+        htw, hth = hsn_table.wrapOn(c, w, h)
+        # Calculate space left on the last page of main items
+        last_part_h = table_parts[-1].wrapOn(c, w, h)[1]
+        space_left = usable_height - last_part_h - 20 # 20 padding
+        
+        if space_left < hth:
+            total_pages += 1
+            hsn_needs_new_page = True
+
+    # --- 4. DRAW PAGES ---
+    for page_idx, part in enumerate(table_parts):
+        # Header
+        y_start = draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body)
+        
+        # Main Table Part
+        pw, ph = part.wrapOn(c, w, h)
+        part.drawOn(c, 30, y_start - ph)
+        current_y = y_start - ph - 20
+        
+        # Footer
+        draw_footer_on_canvas(c, w, h, seller, font_header, font_body)
+        
+        # Page Number
+        c.setFont(font_body, 8)
+        c.drawCentredString(w/2, 25, f"Page {page_idx+1} of {total_pages}") 
+        
+        # Check if we are on the last PART of the main table
+        if page_idx == len(table_parts) - 1:
+            if hsn_table:
+                htw, hth = hsn_table.wrapOn(c, w, h)
+                if not hsn_needs_new_page:
+                    # Draw HSN on this same page
+                    hsn_table.drawOn(c, 30, current_y - hth)
+                else:
+                    # HSN goes to next page
+                    c.showPage()
+                    
+                    # New Page Header/Footer
+                    y_start_new = draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body)
+                    draw_footer_on_canvas(c, w, h, seller, font_header, font_body)
+                    c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
+                    
+                    # Draw HSN Table at the top of usable area
+                    hsn_table.drawOn(c, 30, y_start_new - hth)
+
+        c.showPage()
+    
     c.save()
-    buffer.seek(0)
-    return buffer
 
 def get_whatsapp_web_link(mobile, msg):
     if not mobile: return None
@@ -314,6 +564,8 @@ if "last_generated_invoice" not in st.session_state: st.session_state.last_gener
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
+# Navigation state
+if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -402,8 +654,18 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
-    choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"])
+    # --- NAVIGATION LOGIC ---
+    menu_options = ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
     
+    if st.session_state.menu_selection not in menu_options:
+        st.session_state.menu_selection = "Dashboard"
+        
+    choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
+    
+    if choice != st.session_state.menu_selection:
+        st.session_state.menu_selection = choice
+        st.rerun()
+
     if choice == "Dashboard":
         st.header("📊 Dashboard")
         df_inv = fetch_user_data("Invoices")
@@ -488,7 +750,9 @@ def main_app():
             # Button aligned to bottom to sit flat with input boxes
             st.write("") # Spacer line 1
             st.write("") # Spacer line 2 to push button down
-            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            if st.button("➕ New", type="primary", help="Add New Customer"):
+                st.session_state.menu_selection = "Customer Master"
+                st.rerun()
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
@@ -648,9 +912,36 @@ This mail is autogenerated through the *HisaabKeeper! Billing Software*.
 
 To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp us on +91 6353953790"""
                     
+                    # Ensure path directory function exists or create dummy
+                    # Integrating the user's PDF generation function requires a valid path.
+                    # Since we are using buffer for download, we pass buffer as path to generate_pdf.
+                    # Note: The provided 'generate_pdf' function writes to a file path string. 
+                    # To adapt it without changing it, we use a BytesIO buffer which canvas accepts.
+                    
+                    pdf_buffer = io.BytesIO()
+                    
+                    # Create dictionary of totals for the PDF function
+                    totals_for_pdf = {
+                        'taxable': total_taxable, 
+                        'cgst': cgst_val, 
+                        'sgst': sgst_val, 
+                        'igst': igst_val, 
+                        'total': grand_total,
+                        'is_intra': not is_inter_state 
+                    }
+                    
+                    # We call the NEW generate_pdf function provided by user. 
+                    # Note: user's generate_pdf does NOT return the buffer, it saves to file. 
+                    # We must modify the call to pass the buffer as 'path' so it writes to memory.
+                    generate_pdf(profile, df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict(), 
+                                 valid_items.to_dict('records'), inv_no, inv_date_str, 
+                                 totals_for_pdf, is_letterhead=False, path=pdf_buffer) # Passing buffer as path
+                    
+                    pdf_buffer.seek(0) # Reset buffer pointer
+                    
                     st.session_state.last_generated_invoice = {
                         "no": inv_no, 
-                        "pdf_bytes": generate_pdf_buffer(profile, df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict(), valid_items.to_dict('records'), inv_no, inv_date_str, {'taxable': total_taxable, 'cgst': cgst_val, 'sgst': sgst_val, 'igst': igst_val, 'total': grand_total}, ship_data),
+                        "pdf_bytes": pdf_buffer,
                         "wa_link": get_whatsapp_web_link(cust_mob, msg_body) if cust_mob else None,
                         "mail_link": f"mailto:{cust_email}?subject={urllib.parse.quote(f'Invoice {inv_no} from {firm_name}')}&body={urllib.parse.quote(msg_body)}" if cust_email else None
                     }
