@@ -24,43 +24,25 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+    /* Global Font Settings */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
 
-    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
-    
-    /* SUMMARY BOX STYLING - ROBOTO FONT */
-    .bill-summary-box { 
-        background-color: #f9f9f9; 
-        padding: 20px; 
-        border-radius: 8px; 
-        border: 1px solid #e0e0e0; 
-        margin-top: 20px;
-        font-family: 'Roboto', sans-serif; 
-    }
-    
-    .summary-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 8px;
-        font-size: 16px;
-        color: #333;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    .total-row { 
-        display: flex;
-        justify-content: space-between;
-        font-size: 20px; 
-        font-weight: bold; 
-        border-top: 1px solid #ccc; 
-        margin-top: 10px; 
-        padding-top: 10px; 
-        color: #000;
-        font-family: 'Roboto', sans-serif;
+    .bill-header { 
+        font-size: 26px; 
+        font-weight: 700; 
+        margin-bottom: 20px; 
+        color: #1E1E1E; 
     }
     
     /* Button Width Fix */
     .stButton button { width: 100%; }
+    
+    /* Column alignment fix */
+    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,21 +67,6 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPER: INDIAN CURRENCY FORMATTER (Available for PDF, Unused in UI Summary per request) ---
-def format_indian_currency(amount):
-    try: amount = float(amount)
-    except: return "₹ 0.00"
-    s = "{:.2f}".format(amount)
-    parts = s.split('.')
-    integer_part = parts[0]
-    if len(integer_part) > 3:
-        last_three = integer_part[-3:]
-        rest = integer_part[:-3]
-        rest = re.sub(r"\B(?=(\d{2})+(?!\d))", ",", rest)
-        formatted_integer = rest + "," + last_three
-    else: formatted_integer = integer_part
-    return f"₹ {formatted_integer}.{parts[1]}"
-
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
 def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
@@ -108,123 +75,114 @@ def fetch_data(worksheet_name):
     """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
-        "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
-        "Customers": ["UserID", "Name", "GSTIN", "Address 1", "Address 2", "Address 3", "State", "Mobile", "Email"],
-        "Invoices": ["UserID", "Bill No", "Date", "Buyer Name", "Items", "Total Taxable", "CGST", "SGST", "IGST", "Grand Total", "Ship Name", "Ship GSTIN", "Ship Addr1", "Ship Addr2", "Ship Addr3"],
+        "Users": [
+            "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
+            "Mobile", "Email", "Template", 
+            "Addr1", "Addr2", "Pincode", "District", "State", 
+            "Bank Name", "Branch", "Account No", "IFSC", "UPI"
+        ],
+        "Customers": [
+            "UserID", "Name", "GSTIN", 
+            "Address 1", "Address 2", "Address 3", "State", 
+            "Mobile", "Email"
+        ],
+        "Invoices": [
+            "UserID", "Bill No", "Date", "Buyer Name", "Items", 
+            "Total Taxable", "CGST", "SGST", "IGST", "Grand Total", 
+            "Ship Name", "Ship GSTIN", "Ship Addr1", "Ship Addr2", "Ship Addr3"
+        ],
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
     }
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         if worksheet_name in schema:
-            for col in schema[worksheet_name]:
+            expected_cols = schema[worksheet_name]
+            for col in expected_cols:
                 if col not in df.columns: df[col] = ""
-            df = df[schema[worksheet_name]]
+            df = df[expected_cols]
         return df
-    except: return pd.DataFrame(columns=schema.get(worksheet_name, []))
+    except Exception:
+        cols = schema.get(worksheet_name, [])
+        return pd.DataFrame(columns=cols)
 
 def fetch_user_data(worksheet_name):
     if not st.session_state.get("user_id"): return pd.DataFrame()
     df = fetch_data(worksheet_name)
     if "UserID" in df.columns:
+        df["UserID"] = df["UserID"].astype(str)
         return df[df["UserID"] == str(st.session_state["user_id"])]
     return df
 
 def save_row_to_sheet(worksheet_name, new_row_dict):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
-    if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
+    if "UserID" not in new_row_dict and worksheet_name != "Users":
+        new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
-    updated_df = pd.concat([df, new_df], ignore_index=True) if not df.empty else new_df
+    if df.empty: updated_df = new_df
+    else: updated_df = pd.concat([df, new_df], ignore_index=True)
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
-    except Exception as e: st.error(f"Error: {e}")
+    except Exception as e: st.error(f"Error saving to database: {e}")
 
 def save_bulk_data(worksheet_name, new_df_chunk):
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
-    if "UserID" not in new_df_chunk.columns: new_df_chunk["UserID"] = st.session_state["user_id"]
-    else: new_df_chunk["UserID"] = new_df_chunk["UserID"].fillna(st.session_state["user_id"])
-    updated_df = pd.concat([df, new_df_chunk], ignore_index=True) if not df.empty else new_df_chunk
+    if "UserID" not in new_df_chunk.columns:
+        new_df_chunk["UserID"] = st.session_state["user_id"]
+    else:
+        new_df_chunk["UserID"] = new_df_chunk["UserID"].fillna(st.session_state["user_id"])
+    if df.empty: updated_df = new_df_chunk
+    else: updated_df = pd.concat([df, new_df_chunk], ignore_index=True)
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
     except Exception as e:
-        st.error(f"Error: {e}")
+        st.error(f"Error saving bulk data: {e}")
         return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
     df = fetch_data("Users")
-    idx = df[df["UserID"] == str(st.session_state["user_id"])].index
+    df["UserID"] = df["UserID"].astype(str)
+    current_uid = str(st.session_state["user_id"])
+    idx = df[df["UserID"] == current_uid].index
     if not idx.empty:
-        for k, v in updated_profile_dict.items(): df.at[idx[0], k] = v
+        for key, value in updated_profile_dict.items():
+            df.at[idx[0], key] = value
         try:
             conn.update(worksheet="Users", data=df)
+            st.cache_data.clear()
             st.session_state.user_profile = df.iloc[idx[0]].to_dict()
             return True
-        except Exception as e: st.error(f"Error: {e}"); return False
+        except Exception as e:
+            st.error(f"Failed to update profile: {e}")
+            return False
     return False
 
-# --- PDF GENERATOR (MULTI-TEMPLATE SUPPORT) ---
+# --- PDF GENERATOR ---
 def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_details=None):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
-    template = seller.get("Template", "Simple")
+    c.setFont("Helvetica-Bold", 18)
+    c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
+    c.setFont("Helvetica", 10)
+    c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
+    y = h-80
+    if seller.get('Is GST') == 'Yes' and seller.get('GSTIN'): 
+        c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
+    elif seller.get('PAN'):
+        c.drawCentredString(w/2, y, f"PAN: {seller.get('PAN')}"); y-=12
+    addr = f"{seller.get('Addr1','')}, {seller.get('Addr2','')}, {seller.get('State','')}"
+    c.drawCentredString(w/2, y, addr); y-=12
+    c.drawCentredString(w/2, y, f"M: {seller.get('Mobile','')} | E: {seller.get('Email','')}")
+    c.line(30, y-10, w-30, y-10)
     
-    # --- TEMPLATE LOGIC ---
-    if template == "Modern":
-        # MODERN HEADER (Left Aligned Bold)
-        c.setFont("Helvetica-Bold", 20)
-        c.drawString(40, h-50, str(seller.get('Business Name', 'My Firm')))
-        c.setFont("Helvetica", 10)
-        c.drawString(40, h-65, str(seller.get('Tagline', '')))
-        # Right aligned Tax Invoice
-        c.setFont("Helvetica-Bold", 24)
-        c.drawRightString(w-40, h-50, "TAX INVOICE")
-        # Line
-        c.setStrokeColor(colors.HexColor("#333333"))
-        c.line(40, h-80, w-40, h-80)
-        
-        # Details below line
-        y = h-100
-        c.setFont("Helvetica", 10)
-        c.drawString(40, y, f"GSTIN: {seller.get('GSTIN','')}")
-        c.drawRightString(w-40, y, f"Invoice No: {inv_no}")
-        y -= 15
-        c.drawString(40, y, f"M: {seller.get('Mobile','')}")
-        c.drawRightString(w-40, y, f"Date: {inv_date}")
-        
-    elif template == "Formal":
-        # FORMAL HEADER (Boxed / Centered with Border)
-        c.rect(30, h-130, w-60, 100) # Header Box
-        c.setFont("Helvetica-Bold", 22)
-        c.drawCentredString(w/2, h-60, str(seller.get('Business Name', 'My Firm')))
-        c.setFont("Helvetica", 10)
-        c.drawCentredString(w/2, h-80, f"GSTIN: {seller.get('GSTIN','')}")
-        c.drawCentredString(w/2, h-95, f"{seller.get('Addr1','')}, {seller.get('State','')}")
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(40, h-150, "TAX INVOICE")
-        c.drawRightString(w-40, h-150, f"Inv: {inv_no} | Dt: {inv_date}")
-        
-    else: # SIMPLE (Default)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
-        c.setFont("Helvetica", 10)
-        c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
-        y = h-80
-        if seller.get('GSTIN'): c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
-        c.line(30, y-10, w-30, y-10)
-        c.setFont("Helvetica-Bold", 10); c.drawString(400, y-40, "Invoice Details:")
-        c.setFont("Helvetica", 10)
-        c.drawString(400, y-55, f"No: {inv_no}")
-        c.drawString(400, y-70, f"Date: {inv_date}")
-
-    # --- COMMON BODY (Bill To / Ship To) ---
-    y_bill = h-180 if template == "Formal" else h-120
+    y_bill = y-40
     c.setFont("Helvetica-Bold", 10); c.drawString(40, y_bill, "Bill To:")
     c.setFont("Helvetica", 10)
     c.drawString(40, y_bill-15, str(buyer.get('Name','')))
@@ -232,59 +190,59 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
     c.drawString(40, y_bill-45, f"Addr: {buyer.get('Address 1','')}, {buyer.get('State','')}")
 
     if ship_details and ship_details.get("IsShipping"):
-        c.setFont("Helvetica-Bold", 10); c.drawString(250, y_bill, "Ship To:")
+        c.setFont("Helvetica-Bold", 10); c.drawString(200, y_bill, "Ship To:")
         c.setFont("Helvetica", 10)
-        c.drawString(250, y_bill-15, str(ship_details.get('Name','')))
-        c.drawString(250, y_bill-30, f"GSTIN: {ship_details.get('GSTIN','')}")
-        c.drawString(250, y_bill-45, f"Addr: {ship_details.get('Addr1','')}")
+        c.drawString(200, y_bill-15, str(ship_details.get('Name','')))
+        c.drawString(200, y_bill-30, f"GSTIN: {ship_details.get('GSTIN','')}")
+        c.drawString(200, y_bill-45, f"Addr: {ship_details.get('Addr1','')}")
 
-    # --- TABLE ---
-    y_table = y_bill - 80
-    headers = ["Item", "HSN", "Qty", "UOM", "Rate", "GST", "Total"]
-    x_pos = [40, 180, 240, 290, 340, 400, 460]
+    c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
+    c.setFont("Helvetica", 10)
+    c.drawString(400, y_bill-15, f"No: {inv_no}")
+    c.drawString(400, y_bill-30, f"Date: {inv_date}")
     
-    # Table Header Styling
-    c.setFillColor(colors.lightgrey)
-    c.rect(30, y_table-5, w-60, 15, fill=1, stroke=0)
-    c.setFillColor(colors.black)
+    y_table = y_bill - 70
     c.setFont("Helvetica-Bold", 9)
-    for i, h_txt in enumerate(headers): c.drawString(x_pos[i], y_table, h_txt)
+    headers = ["Item", "HSN", "Qty", "UOM", "Rate", "GST%", "Total"]
+    x_positions = [40, 200, 250, 300, 350, 400, 450]
+    for i, h_text in enumerate(headers): c.drawString(x_positions[i], y_table, h_text)
+    c.line(30, y_table-5, w-30, y_table-5)
     
     y_row = y_table - 20
     c.setFont("Helvetica", 9)
     for i in items:
-        amt = float(i.get('Qty',0)) * float(i.get('Rate',0))
-        gst_amt = amt * (float(i.get('GST Rate',0))/100)
-        tot = amt + gst_amt
+        name = str(i.get('Description', 'Item'))[:25]
+        hsn = str(i.get('HSN', ''))
+        qty = str(i.get('Qty', 0))
+        uom = str(i.get('UOM', ''))
+        rate = f"{float(i.get('Rate', 0)):.2f}"
+        gst_rate = f"{float(i.get('GST Rate', 0))}%"
+        base = float(i.get('Qty', 0)) * float(i.get('Rate', 0))
+        tax_amt = base * (float(i.get('GST Rate', 0))/100)
+        total_row = base + tax_amt
         
-        c.drawString(40, y_row, str(i.get('Description',''))[:25])
-        c.drawString(180, y_row, str(i.get('HSN','')))
-        c.drawString(240, y_row, str(i.get('Qty',0)))
-        c.drawString(290, y_row, str(i.get('UOM','')))
-        c.drawString(340, y_row, f"{float(i.get('Rate',0)):.2f}")
-        c.drawString(400, y_row, f"{float(i.get('GST Rate',0))}%")
-        c.drawString(460, y_row, f"{tot:.2f}")
+        c.drawString(40, y_row, name)
+        c.drawString(200, y_row, hsn)
+        c.drawString(250, y_row, qty)
+        c.drawString(300, y_row, uom)
+        c.drawString(350, y_row, rate)
+        c.drawString(400, y_row, gst_rate)
+        c.drawString(450, y_row, f"{total_row:.2f}")
         y_row -= 15
-        if y_row < 50: c.showPage(); y_row = h-50
+        if y_row < 50: c.showPage(); y_row = h - 50
 
     c.line(30, y_row+5, w-30, y_row+5)
-    
-    # --- TOTALS SECTION ---
-    y_tot = y_row - 20
     c.setFont("Helvetica-Bold", 10)
-    c.drawRightString(500, y_tot, f"Taxable: {format_indian_currency(totals['taxable'])}")
-    y_tot -= 15
+    y_total = y_row - 20
+    c.drawRightString(500, y_total, f"Taxable Value: {totals['taxable']:.2f}"); y_total -= 15
     if totals['cgst'] > 0:
-        c.drawRightString(500, y_tot, f"CGST: {format_indian_currency(totals['cgst'])}")
-        y_tot -= 15
-        c.drawRightString(500, y_tot, f"SGST: {format_indian_currency(totals['sgst'])}")
+        c.drawRightString(500, y_total, f"CGST: {totals['cgst']:.2f}"); y_total -= 15
+        c.drawRightString(500, y_total, f"SGST: {totals['sgst']:.2f}"); y_total -= 15
     if totals['igst'] > 0:
-        c.drawRightString(500, y_tot, f"IGST: {format_indian_currency(totals['igst'])}")
-    y_tot -= 20
+        c.drawRightString(500, y_total, f"IGST: {totals['igst']:.2f}"); y_total -= 15
     c.setFont("Helvetica-Bold", 12)
-    c.drawRightString(500, y_tot, f"Grand Total: {format_indian_currency(totals['total'])}")
+    c.drawRightString(500, y_total-10, f"Grand Total: ₹ {totals['total']:.2f}")
     
-    # --- BANK & SIGN ---
     if seller.get("Bank Name") and str(seller.get("Bank Name")) != "nan":
         y_bank = 100
         c.line(30, y_bank + 15, w-30, y_bank + 15)
@@ -292,17 +250,16 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
         c.drawString(40, y_bank, "Bank Details:")
         c.setFont("Helvetica", 9)
         c.drawString(110, y_bank, f"{seller.get('Bank Name','')} | A/c: {seller.get('Account No','')} | IFSC: {seller.get('IFSC','')}")
-        
-    c.drawRightString(w-40, 60, "Authorized Signatory")
     c.save()
     buffer.seek(0)
     return buffer
 
 def get_whatsapp_web_link(mobile, msg):
     if not mobile: return None
-    clean = re.sub(r'\D', '', str(mobile))
-    if len(clean) == 10: clean = "91" + clean
-    return f"https://web.whatsapp.com/send?phone={clean}&text={urllib.parse.quote(msg)}"
+    clean_num = re.sub(r'\D', '', str(mobile))
+    if not clean_num.startswith("91") and len(clean_num) == 10:
+        clean_num = "91" + clean_num
+    return f"https://web.whatsapp.com/send?phone={clean_num}&text={urllib.parse.quote(msg)}"
 
 def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
@@ -342,8 +299,6 @@ if "last_generated_invoice" not in st.session_state: st.session_state.last_gener
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
-# Navigation state
-if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -432,25 +387,15 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
-    # --- NAVIGATION LOGIC ---
-    menu_options = ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
+    choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"])
     
-    if st.session_state.menu_selection not in menu_options:
-        st.session_state.menu_selection = "Dashboard"
-        
-    choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
-    
-    if choice != st.session_state.menu_selection:
-        st.session_state.menu_selection = choice
-        st.rerun()
-
     if choice == "Dashboard":
         st.header("📊 Dashboard")
         df_inv = fetch_user_data("Invoices")
         total_sales = 0
         if not df_inv.empty and "Grand Total" in df_inv.columns: 
             total_sales = pd.to_numeric(df_inv["Grand Total"], errors='coerce').sum()
-        st.metric("Total Sales", f"₹ {total_sales:,.2f}")
+        st.metric("Total Sales", f"₹ {total_sales:,.0f}")
         st.dataframe(df_inv.tail(5), use_container_width=True)
 
     elif choice == "Customer Master":
@@ -514,26 +459,25 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 55% Customer, 15% Add Button, 30% Date
+        # 60% Customer, 15% Add Button, 25% Date = 100% total width
         c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
-            st.write("") # Spacer
+            st.write("") # Spacer line 1
             cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
             def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
-            st.write(""); st.write("")
-            # REDIRECT TO CUSTOMER MASTER ON CLICK
-            if st.button("➕ New", type="primary", help="Add New Customer"):
-                st.session_state.menu_selection = "Customer Master"
-                st.rerun()
+            # Button aligned to bottom to sit flat with input boxes
+            st.write("") # Spacer line 1
+            st.write("") # Spacer line 2 to push button down
+            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
-            st.write("") # Spacer
+            st.write("") # Spacer line 1
             inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
             inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
@@ -557,9 +501,11 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-        st.write("") # Spacer
+        st.write("") # Spacer line 1
         
+        # Narrow column for Invoice No to match your screenshot
         ic1, ic2 = st.columns([0.4, 0.6]) 
+        
         with ic1:
             val_inv = st.session_state.bm_invoice_no if "bm_invoice_no" in st.session_state else ""
             inv_no = st.text_input("Invoice Number", value=val_inv, label_visibility="collapsed", placeholder="Enter Inv No", key="bm_inv_val")
@@ -593,7 +539,7 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="final_invoice_editor_v9"
+            }, key="final_invoice_editor_polished_v8"
         )
 
         valid_items = edited_items[edited_items["Description"] != ""].copy()
@@ -622,21 +568,32 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML - NO INDENTATION) ---
+        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (NEW PROFESSIONAL DESIGN) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
-            # Reverted to STANDARD Formatting per request
             gst_label = "IGST" if is_inter_state else "CGST+SGST"
             gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
             
-            # NO INDENTATION to fix "Raw HTML" bug & using Roboto font
-            html_content = f"""<div class='bill-summary-box'>
-<div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
-<div class='summary-row'><span>{gst_label}:</span><span>{gst_val_fmt}</span></div>
-<div class='total-row'><span>Total:</span><span>₹ {grand_total:,.2f}</span></div>
-</div>"""
+            # PROFESSIONAL CARD DESIGN (Dark Sidebar Style)
+            html_content = f"""
+            <div style="background-color: #F0F2F6; padding: 20px; border-radius: 15px; border-left: 5px solid #FF4B4B;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span style="font-weight: 500; color: #555;">Sub Total</span>
+                    <span style="font-weight: 600; color: #333;">₹ {total_taxable:,.2f}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                    <span style="font-weight: 500; color: #555;">{gst_label}</span>
+                    <span style="font-weight: 600; color: #333;">{gst_val_fmt}</span>
+                </div>
+                <hr style="margin: 10px 0; border-color: #ddd;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 18px; font-weight: bold; color: #000;">Grand Total</span>
+                    <span style="font-size: 22px; font-weight: bold; color: #FF4B4B;">₹ {grand_total:,.2f}</span>
+                </div>
+            </div>
+            """
             st.markdown(html_content, unsafe_allow_html=True)
             
             st.write("")
@@ -687,7 +644,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                     st.session_state.reset_invoice_trigger = True 
                     st.rerun()
 
-        # --- SUCCESS ACTIONS (Only visible after generation) ---
+        # --- SUCCESS ACTIONS ---
         if st.session_state.last_generated_invoice:
             last_inv = st.session_state.last_generated_invoice
             st.success(f"✅ Invoice {last_inv['no']} Generated Successfully!")
@@ -695,6 +652,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
+            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
