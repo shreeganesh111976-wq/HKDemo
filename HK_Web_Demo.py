@@ -21,9 +21,9 @@ from streamlit_gsheets import GSheetsConnection
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
 
-# --- EMAIL CONFIGURATION (MUST FILL THIS) ---
-SENDER_EMAIL = "your_email@gmail.com"  # <--- PUT YOUR GMAIL HERE
-SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- PUT YOUR APP PASSWORD HERE
+# --- EMAIL CONFIGURATION ---
+SENDER_EMAIL = "your_email@gmail.com"  # <--- REPLACE THIS
+SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
 
 # --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
@@ -33,17 +33,14 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data from a worksheet with error handling."""
     conn = get_db_connection()
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         return df
     except Exception:
-        # Default columns if sheet is empty/missing
         if worksheet_name == "Users": 
-            # ADDED NEW COLUMNS HERE
             cols = [
-                "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", 
+                "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
                 "Mobile", "Email", "Template", 
                 "Addr1", "Addr2", "Pincode", "District", "State", 
                 "Bank Name", "Branch", "Account No", "IFSC", "UPI"
@@ -61,49 +58,35 @@ def fetch_data(worksheet_name):
         return pd.DataFrame(columns=cols)
 
 def fetch_user_data(worksheet_name):
-    """Fetches data ONLY for the logged-in user."""
     if not st.session_state.get("user_id"): return pd.DataFrame()
     df = fetch_data(worksheet_name)
-    
     if "UserID" in df.columns:
         df["UserID"] = df["UserID"].astype(str)
         return df[df["UserID"] == str(st.session_state["user_id"])]
     return df
 
 def save_row_to_sheet(worksheet_name, new_row_dict):
-    """Appends a single row to the sheet."""
     conn = get_db_connection()
     df = fetch_data(worksheet_name)
-    
     if "UserID" not in new_row_dict and worksheet_name != "Users":
         new_row_dict["UserID"] = st.session_state["user_id"]
-    
     new_df = pd.DataFrame([new_row_dict])
-    
-    if df.empty:
-        updated_df = new_df
-    else:
-        updated_df = pd.concat([df, new_df], ignore_index=True)
-    
+    if df.empty: updated_df = new_df
+    else: updated_df = pd.concat([df, new_df], ignore_index=True)
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
-    except Exception as e:
-        st.error(f"Error saving to database: {e}")
+    except Exception as e: st.error(f"Error saving to database: {e}")
 
 def update_user_profile(updated_profile_dict):
-    """Updates the existing user's profile row in the Users sheet."""
     conn = get_db_connection()
     df = fetch_data("Users")
-    
     df["UserID"] = df["UserID"].astype(str)
     current_uid = str(st.session_state["user_id"])
     idx = df[df["UserID"] == current_uid].index
-    
     if not idx.empty:
         for key, value in updated_profile_dict.items():
             df.at[idx[0], key] = value
-        
         try:
             conn.update(worksheet="Users", data=df)
             st.cache_data.clear()
@@ -119,18 +102,20 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
-    
     c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
     c.setFont("Helvetica", 10)
     c.drawCentredString(w/2, h-65, str(seller.get('Tagline', '')))
     
     y = h-80
-    if seller.get('GSTIN'): c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
+    if seller.get('Is GST') == 'Yes' and seller.get('GSTIN'): 
+        c.drawCentredString(w/2, y, f"GSTIN: {seller.get('GSTIN')}"); y-=12
+    elif seller.get('PAN'):
+        c.drawCentredString(w/2, y, f"PAN: {seller.get('PAN')}"); y-=12
+        
     addr = f"{seller.get('Addr1','')}, {seller.get('Addr2','')}"
     c.drawCentredString(w/2, y, addr); y-=12
     c.drawCentredString(w/2, y, f"M: {seller.get('Mobile','')} | E: {seller.get('Email','')}")
-    
     c.line(30, y-10, w-30, y-10)
     
     y_bill = y-40
@@ -166,7 +151,6 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.drawRightString(500, y_row-20, f"Taxable: {totals['taxable']:.2f}")
     c.drawRightString(500, y_row-35, f"Total: {totals['total']:.2f}")
     
-    # BANK DETAILS FOOTER
     if seller.get("Bank Name") and str(seller.get("Bank Name")) != "nan":
         y_bank = 100
         c.line(30, y_bank + 15, w-30, y_bank + 15)
@@ -183,7 +167,25 @@ def get_whatsapp_link(mobile, msg):
     if not mobile: return None
     return f"https://wa.me/91{mobile}?text={urllib.parse.quote(msg)}"
 
-# --- AUTH & OTP HELPERS ---
+# --- HELPER FUNCTIONS ---
+def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
+def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
+def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
+
+def send_otp_email(to_email, otp_code):
+    if "your_email" in SENDER_EMAIL:
+        st.error("Setup Error: Sender Email not configured."); return False
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL; msg['To'] = to_email; msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
+        body = f"Hello,\n\nOTP: {otp_code}\n\nRegards,\nHisaabKeeper"
+        msg.attach(MIMEText(body, 'plain'))
+        server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD); server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
+        server.quit(); return True
+    except Exception as e: st.error(f"Failed to send email: {e}"); return False
+
+# --- SESSION STATE ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
@@ -192,44 +194,10 @@ if "otp_generated" not in st.session_state: st.session_state.otp_generated = Non
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
 
-def generate_unique_id():
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
-
-def is_valid_email(email):
-    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(pattern, email) is not None
-
-def is_valid_mobile(mobile):
-    pattern = r'^[6-9]\d{9}$'
-    return re.match(pattern, mobile) is not None
-
-def send_otp_email(to_email, otp_code):
-    if "your_email" in SENDER_EMAIL:
-        st.error("Setup Error: Sender Email not configured in code.")
-        return False
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL
-        msg['To'] = to_email
-        msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
-        body = f"Hello,\n\nYour One-Time Password (OTP) for registration is: {otp_code}\n\nDo not share this with anyone.\n\nRegards,\nHisaabKeeper Team"
-        msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(SENDER_EMAIL, to_email, text)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Failed to send email: {e}")
-        return False
-
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
     if st.session_state.reg_success_msg:
-        st.success(st.session_state.reg_success_msg)
-        st.session_state.reg_success_msg = None
+        st.success(st.session_state.reg_success_msg); st.session_state.reg_success_msg = None
 
     if st.session_state.auth_mode == "login":
         with st.container():
@@ -248,14 +216,11 @@ def login_page():
                             st.session_state.user_profile = user_row.iloc[0].to_dict()
                             st.success("Login Successful!"); time.sleep(1); st.rerun()
                         else: st.error("Invalid Username or Password")
-                    else: st.error("System Error: Users database is missing columns.")
+                    else: st.error("System Error: Users database missing.")
             st.markdown("---")
             col1, col2 = st.columns([0.7, 0.3])
             col1.write("New to HisaabKeeper?")
-            if col2.button("Create Account"):
-                st.session_state.auth_mode = "register"
-                st.session_state.otp_generated = None
-                st.rerun()
+            if col2.button("Create Account"): st.session_state.auth_mode = "register"; st.session_state.otp_generated = None; st.rerun()
 
     elif st.session_state.auth_mode == "register":
         with st.container():
@@ -269,61 +234,44 @@ def login_page():
                     em = st.text_input("Email ID")
                     if st.form_submit_button("Verify Email & Register"):
                         df_users = fetch_data("Users")
-                        if not new_username or not new_pwd or not bn or not mob or not em:
-                            st.error("All fields are mandatory.")
-                        elif not is_valid_mobile(mob):
-                            st.error("Invalid Mobile Number!")
-                        elif not is_valid_email(em):
-                            st.error("Invalid Email Format!")
+                        if not new_username or not new_pwd or not bn or not mob or not em: st.error("All fields mandatory.")
+                        elif not is_valid_mobile(mob): st.error("Invalid Mobile Number!")
+                        elif not is_valid_email(em): st.error("Invalid Email Format!")
                         elif not df_users.empty and "Username" in df_users.columns and new_username in df_users["Username"].astype(str).values:
-                            st.error("Username already taken! Please choose another.")
+                            st.error("Username already taken!")
                         else:
                             otp = str(random.randint(100000, 999999))
                             st.session_state.reg_temp_data = {"Username": new_username, "Password": new_pwd, "Business Name": bn, "Mobile": mob, "Email": em}
                             with st.spinner("Sending OTP..."):
                                 if send_otp_email(em, otp):
-                                    st.session_state.otp_generated = otp
-                                    st.session_state.otp_email = em
-                                    st.toast(f"OTP sent to {em}", icon="📧")
-                                    st.rerun()
-                                else: st.error("Could not send email. Check internet or SMTP settings.")
+                                    st.session_state.otp_generated = otp; st.session_state.otp_email = em; st.toast(f"OTP sent to {em}", icon="📧"); st.rerun()
+                                else: st.error("Could not send email. Check SMTP.")
             else:
-                st.info(f"An OTP has been sent to **{st.session_state.otp_email}**")
+                st.info(f"OTP sent to {st.session_state.otp_email}")
                 with st.form("otp_form"):
                     user_otp = st.text_input("Enter 6-Digit OTP")
                     c1, c2 = st.columns(2)
-                    verify_btn = c1.form_submit_button("Confirm Registration", type="primary")
-                    cancel_btn = c2.form_submit_button("Cancel / Back")
-                    if verify_btn:
+                    if c1.form_submit_button("Confirm Registration", type="primary"):
                         if user_otp == st.session_state.otp_generated:
                             unique_id = generate_unique_id()
                             final_data = st.session_state.reg_temp_data
                             new_user = {
                                 "UserID": unique_id, "Username": final_data["Username"], "Password": final_data["Password"],
-                                "Business Name": final_data["Business Name"], "Tagline": "", "GSTIN": "",
+                                "Business Name": final_data["Business Name"], "Tagline": "", "GSTIN": "", "PAN": "",
                                 "Mobile": final_data["Mobile"], "Email": final_data["Email"],
                                 "Addr1": "", "Addr2": "", "Pincode": "", "District": "", "State": "", "Is GST": "No",
                                 "Bank Name": "", "Branch": "", "Account No": "", "IFSC": "", "UPI": "", "Template": "Simple"
                             }
                             save_row_to_sheet("Users", new_user)
-                            st.session_state.otp_generated = None
-                            st.session_state.reg_temp_data = {}
-                            st.session_state.reg_success_msg = f"🎉 Verified! Registration Successful for {final_data['Username']}"
-                            st.session_state.auth_mode = "login"
-                            st.rerun()
+                            st.session_state.otp_generated = None; st.session_state.reg_temp_data = {}
+                            st.session_state.reg_success_msg = f"🎉 Verified! Login as {final_data['Username']}"
+                            st.session_state.auth_mode = "login"; st.rerun()
                         else: st.error("Incorrect OTP.")
-                    if cancel_btn:
-                        st.session_state.otp_generated = None
-                        st.rerun()
+                    if c2.form_submit_button("Cancel"): st.session_state.otp_generated = None; st.rerun()
             st.markdown("---")
-            if st.button("Back to Login"):
-                st.session_state.auth_mode = "login"
-                st.session_state.otp_generated = None
-                st.rerun()
+            if st.button("Back to Login"): st.session_state.auth_mode = "login"; st.session_state.otp_generated = None; st.rerun()
 
-# --- MAIN APP ---
 def main_app():
-    # CLEAN THE PROFILE DATA (Remove nan)
     raw_profile = st.session_state.user_profile
     profile = {k: (v if str(v) != 'nan' else '') for k, v in raw_profile.items()}
     
@@ -331,19 +279,15 @@ def main_app():
     st.sidebar.caption(f"User: {profile.get('Username', 'User')}")
     
     if st.sidebar.button("Logout"):
-        st.session_state.user_id = None
-        st.session_state.user_profile = {}
-        st.session_state.auth_mode = "login"
-        st.rerun()
+        st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
-    choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing", "Ledger", "Inward", "Profile"])
+    choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing", "Ledger", "Inward", "Company Profile"])
     
     if choice == "Dashboard":
         st.header("📊 Dashboard")
         df_inv = fetch_user_data("Invoices")
         total_sales = 0
-        if not df_inv.empty and "Invoice Value" in df_inv.columns:
-            total_sales = pd.to_numeric(df_inv["Invoice Value"], errors='coerce').sum()
+        if not df_inv.empty and "Invoice Value" in df_inv.columns: total_sales = pd.to_numeric(df_inv["Invoice Value"], errors='coerce').sum()
         st.metric("Total Sales", f"₹ {total_sales:,.0f}")
         st.dataframe(df_inv.tail(5), use_container_width=True)
 
@@ -361,20 +305,17 @@ def main_app():
         st.header("🧾 New Invoice")
         df_cust = fetch_user_data("Customers")
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
-        
         c1, c2 = st.columns([2,1])
         sel_cust = c1.selectbox("Customer", cust_list)
         inv_date = c2.date_input("Date")
         inv_no = st.text_input("Invoice No (e.g. 001)")
         
-        if "items" not in st.session_state or not isinstance(st.session_state.items, pd.DataFrame):
-            st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
+        if "items" not in st.session_state or not isinstance(st.session_state.items, pd.DataFrame): st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
         try:
             st.session_state.items["Description"] = st.session_state.items["Description"].astype(str)
             st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
             st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
-        except Exception:
-            st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
+        except Exception: st.session_state.items = pd.DataFrame([{"Description": "", "Qty": 1.0, "Rate": 0.0}])
 
         edited_items = st.data_editor(
             st.session_state.items, num_rows="dynamic", use_container_width=True,
@@ -382,8 +323,7 @@ def main_app():
                 "Description": st.column_config.TextColumn("Description", required=True),
                 "Qty": st.column_config.NumberColumn("Qty", required=True, default=1.0),
                 "Rate": st.column_config.NumberColumn("Rate", required=True, default=0.0)
-            },
-            key="bill_editor_safe"
+            }, key="bill_editor_safe"
         )
         
         valid = edited_items[edited_items["Description"]!=""].copy()
@@ -433,9 +373,21 @@ def main_app():
                 save_row_to_sheet("Inward", {"Date": str(date.today()), "Supplier Name": sup, "Total Value": val})
                 st.success("Saved")
 
-    elif choice == "Profile":
+    elif choice == "Company Profile":
         st.header("⚙️ Company Profile")
         st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
+        
+        # --- TAX CONFIGURATION (OUTSIDE FORM TO ENABLE REFRESH) ---
+        st.subheader("Tax Configuration")
+        col_tax1, col_tax2 = st.columns([1, 2])
+        # We handle the 'Is GST' update immediately here
+        current_gst_val = profile.get("Is GST", "No")
+        gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], 
+                                     index=0 if current_gst_val == "Yes" else 1, 
+                                     horizontal=True)
+        
+        # If selection changed, we need to update session profile immediately to reflect in form below
+        # Note: We don't save to DB yet, just UI logic
         
         with st.form("edit_profile"):
             # --- SECTION 1: Company Details ---
@@ -445,7 +397,6 @@ def main_app():
                 tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
                 
                 c3, c4 = st.columns(2)
-                # Logo Upload (UI Only for now)
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
                 template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], 
                                       index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
@@ -454,20 +405,24 @@ def main_app():
                 mob = c5.text_input("Business Mobile", value=profile.get("Mobile", ""))
                 em = c6.text_input("Business Email", value=profile.get("Email", ""))
                 
-                c7, c8 = st.columns(2)
-                # Logic for GST Selection Index
-                gst_opts = ["Select", "Yes", "No"]
-                curr_gst = profile.get("Is GST", "Select")
-                gst_idx = gst_opts.index(curr_gst) if curr_gst in gst_opts else 0
+                # Dynamic Field Based on Radio Button Above
+                tax_id_val = ""
+                tax_id_label = ""
                 
-                is_gst = c7.selectbox("Registered in GST?", gst_opts, index=gst_idx)
-                gstin = c8.text_input("GSTIN", value=profile.get("GSTIN", ""))
+                if gst_selection == "Yes":
+                    tax_id_label = "GST Number (15 Digits)"
+                    tax_id_val = st.text_input(tax_id_label, value=profile.get("GSTIN", ""))
+                    pan_val = profile.get("PAN", "") # Keep existing PAN if any hidden
+                else:
+                    tax_id_label = "PAN Number (10 Digits)"
+                    tax_id_val = st.text_input(tax_id_label, value=profile.get("PAN", ""))
+                    pan_val = tax_id_val
+                    gstin_val = ""
 
             # --- SECTION 2: Address Details ---
             with st.expander("📍 Address Details", expanded=False):
                 a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
                 a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
-                
                 ac1, ac2, ac3 = st.columns(3)
                 pincode = ac1.text_input("Pincode", value=profile.get("Pincode", ""))
                 dist = ac2.text_input("District", value=profile.get("District", ""))
@@ -480,21 +435,46 @@ def main_app():
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
                 
                 bc3, bc4 = st.columns(2)
-                acc_no = bc3.text_input("Account Number", value=profile.get("Account No", ""))
+                acc_no = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
                 ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
                 
-                upi = st.text_input("UPI ID (e.g. mobile@upi)", value=profile.get("UPI", ""))
+                upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
 
             if st.form_submit_button("💾 Update Company Profile"):
-                updated_data = {
-                    "Business Name": bn, "Tagline": tag, 
-                    "Mobile": mob, "Email": em, "Template": template,
-                    "Is GST": is_gst, "GSTIN": gstin,
-                    "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
-                    "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
-                }
-                if update_user_profile(updated_data):
-                    st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
+                # --- VALIDATION LOGIC ---
+                errors = []
+                
+                # 1. Tax Validation
+                final_gstin = ""
+                final_pan = ""
+                
+                if gst_selection == "Yes":
+                    if len(tax_id_val) != 15: errors.append("GSTIN must be 15 characters.")
+                    final_gstin = tax_id_val
+                else:
+                    if len(tax_id_val) != 10: errors.append("PAN must be 10 characters.")
+                    final_pan = tax_id_val
+
+                # 2. Account No Validation
+                if acc_no and not acc_no.isdigit():
+                    errors.append("Account Number must contain only digits.")
+
+                # 3. UPI Validation
+                if upi and "@" not in upi:
+                    errors.append("Invalid UPI ID (must contain '@').")
+
+                if errors:
+                    for e in errors: st.error(e)
+                else:
+                    updated_data = {
+                        "Business Name": bn, "Tagline": tag, 
+                        "Mobile": mob, "Email": em, "Template": template,
+                        "Is GST": gst_selection, "GSTIN": final_gstin, "PAN": final_pan,
+                        "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
+                        "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
+                    }
+                    if update_user_profile(updated_data):
+                        st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
 
 if st.session_state.user_id: main_app()
 else: login_page()
