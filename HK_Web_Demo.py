@@ -24,20 +24,21 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 10px; color: #333; }
+    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
     .bill-summary-box { 
-        background-color: #f8f9fa; 
+        background-color: #f9f9f9; 
         padding: 20px; 
-        border-radius: 8px; 
-        border: 1px solid #dee2e6; 
-        margin-top: 15px;
+        border-radius: 10px; 
+        border: 1px solid #e0e0e0; 
+        margin-top: 20px;
+        font-family: sans-serif;
     }
     .summary-row {
         display: flex;
         justify-content: space-between;
         margin-bottom: 8px;
         font-size: 16px;
-        color: #333;
+        color: #444;
     }
     .total-row { 
         display: flex;
@@ -45,11 +46,12 @@ st.markdown("""
         font-size: 20px; 
         font-weight: bold; 
         border-top: 1px solid #ccc; 
-        margin-top: 15px; 
+        margin-top: 10px; 
         padding-top: 10px; 
         color: #000;
     }
-    /* Button alignment fix */
+    /* Fix Button alignment in columns */
+    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
     .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
@@ -60,6 +62,8 @@ SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
 
 # --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
+
+# --- FULL STATE CODES (GST MAPPING) ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -80,6 +84,7 @@ def get_db_connection():
 def fetch_data(worksheet_name):
     """Fetches data and enforces schema."""
     conn = get_db_connection()
+    # Define expected columns
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -291,7 +296,7 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- SESSION STATE ---
+# --- SESSION STATE INITIALIZATION ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
@@ -306,6 +311,7 @@ if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
 
+# --- LOGIN PAGE ---
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
     if st.session_state.reg_success_msg:
@@ -383,6 +389,7 @@ def login_page():
             st.markdown("---")
             if st.button("Back to Login"): st.session_state.auth_mode = "login"; st.session_state.otp_generated = None; st.rerun()
 
+# --- MAIN APP ---
 def main_app():
     raw_profile = st.session_state.user_profile
     profile = {k: (v if str(v) != 'nan' else '') for k, v in raw_profile.items()}
@@ -463,20 +470,23 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED FOR NO OVERLAP ---
-        c1, c2, c3 = st.columns([3, 0.5, 1.5], vertical_alignment="bottom")
+        # Widen Column 1 (60%), Narrow Col 2 (15%), Med Col 3 (25%) to prevent overlap
+        c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
         
-        # 1. Customer
-        c1.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
-        cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
-        sel_cust_name = c1.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
+        with c1:
+            st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
+            cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
+            def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
+            sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
-        # 2. Add Button (Aligned bottom)
-        if c2.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+        with c2:
+            # Add New Button in its own column, bottom aligned
+            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
-        # 3. Date
-        c3.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
-        inv_date_obj = c3.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
-        inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
+        with c3:
+            st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
+            inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
+            inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
         cust_state = ""; cust_gstin = ""; cust_mob = ""; cust_email = ""
         if sel_cust_name != "Select" and not df_cust.empty:
@@ -498,12 +508,13 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-        ic1, ic2 = st.columns([1.3, 3]) 
+        # Narrow column for Invoice No
+        ic1, ic2 = st.columns([0.3, 0.7]) 
         
-        # Reset Logic for Invoice Number
-        val_inv = st.session_state.bm_invoice_no if "bm_invoice_no" in st.session_state else ""
-        inv_no = ic1.text_input("Invoice Number", value=val_inv, label_visibility="collapsed", placeholder="Enter Inv No", key="bm_inv_val")
-        st.session_state.bm_invoice_no = inv_no
+        with ic1:
+            val_inv = st.session_state.bm_invoice_no if "bm_invoice_no" in st.session_state else ""
+            inv_no = st.text_input("Invoice Number", value=val_inv, label_visibility="collapsed", placeholder="Enter Inv No", key="bm_inv_val")
+            st.session_state.bm_invoice_no = inv_no
 
         df_inv_past = fetch_user_data("Invoices")
         past_str = "No past invoices"
@@ -533,7 +544,7 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="final_invoice_editor_polished_v6"
+            }, key="final_invoice_editor_polished_v7"
         )
 
         valid_items = edited_items[edited_items["Description"] != ""].copy()
@@ -562,26 +573,20 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX FIX) ---
+        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML FIX) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
-            # FLEXBOX HTML for Perfect Alignment
-            gst_row_html = ""
-            if is_inter_state:
-                gst_row_html = f"""<div class='summary-row'><span>IGST:</span><span>₹ {igst_val:,.2f}</span></div>"""
-            else:
-                gst_row_html = f"""<div class='summary-row'><span>CGST+SGST:</span><span>₹ {cgst_val+sgst_val:,.2f}</span></div>"""
-
-            total_html = f"""
-            <div class='bill-summary-box'>
-                <div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
-                {gst_row_html}
-                <div class='total-row'><span>Total:</span><span>₹ {grand_total:,.2f}</span></div>
-            </div>
-            """
-            st.markdown(total_html, unsafe_allow_html=True)
+            # Construct Flexbox HTML (No indentation to prevent code blocks)
+            gst_row = f"<div class='summary-row'><span>IGST:</span><span>₹ {igst_val:,.2f}</span></div>" if is_inter_state else f"<div class='summary-row'><span>CGST+SGST:</span><span>₹ {cgst_val+sgst_val:,.2f}</span></div>"
+            
+            html_content = f"""<div class='bill-summary-box'>
+<div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
+{gst_row}
+<div class='total-row'><span>Total:</span><span>₹ {grand_total:,.2f}</span></div>
+</div>"""
+            st.markdown(html_content, unsafe_allow_html=True)
             
             st.write("")
             if st.button("🚀 Save & Generate Invoice", type="primary", use_container_width=True):
@@ -639,7 +644,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
-            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
