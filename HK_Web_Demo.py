@@ -24,43 +24,25 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+    /* Global Font Settings */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
 
-    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
-    
-    /* SUMMARY BOX STYLING - ROBOTO FONT */
-    .bill-summary-box { 
-        background-color: #f9f9f9; 
-        padding: 20px; 
-        border-radius: 8px; 
-        border: 1px solid #e0e0e0; 
-        margin-top: 20px;
-        font-family: 'Roboto', sans-serif; 
-    }
-    
-    .summary-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 8px;
-        font-size: 16px;
-        color: #333;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    .total-row { 
-        display: flex;
-        justify-content: space-between;
-        font-size: 20px; 
-        font-weight: bold; 
-        border-top: 1px solid #ccc; 
-        margin-top: 10px; 
-        padding-top: 10px; 
-        color: #000;
-        font-family: 'Roboto', sans-serif;
+    .bill-header { 
+        font-size: 26px; 
+        font-weight: 700; 
+        margin-bottom: 20px; 
+        color: #1E1E1E; 
     }
     
     /* Button Width Fix */
     .stButton button { width: 100%; }
+    
+    /* Column alignment fix */
+    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -477,8 +459,8 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 55% Customer, 15% Add Button, 30% Date = 100% total width
-        c1, c2, c3 = st.columns([0.55, 0.15, 0.30], vertical_alignment="bottom")
+        # 60% Customer, 15% Add Button, 25% Date = 100% total width
+        c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -491,7 +473,7 @@ def main_app():
             # Button aligned to bottom to sit flat with input boxes
             st.write("") # Spacer line 1
             st.write("") # Spacer line 2 to push button down
-            if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
@@ -586,21 +568,32 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML FIX - NO INDENTATION) ---
+        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (NEW PROFESSIONAL DESIGN) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
-            # Construct Flexbox HTML (FLAT STRING TO PREVENT ERRORS)
             gst_label = "IGST" if is_inter_state else "CGST+SGST"
             gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
             
-            # NO INDENTATION HERE TO FIX "RAW HTML" BUG & MATCH FONT
-            html_content = f"""<div class='bill-summary-box'>
-<div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
-<div class='summary-row'><span>{gst_label}:</span><span>{gst_val_fmt}</span></div>
-<div class='total-row'><span>Total:</span><span>₹ {grand_total:,.2f}</span></div>
-</div>"""
+            # PROFESSIONAL CARD DESIGN (Dark Sidebar Style)
+            html_content = f"""
+            <div style="background-color: #F0F2F6; padding: 20px; border-radius: 15px; border-left: 5px solid #FF4B4B;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                    <span style="font-weight: 500; color: #555;">Sub Total</span>
+                    <span style="font-weight: 600; color: #333;">₹ {total_taxable:,.2f}</span>
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                    <span style="font-weight: 500; color: #555;">{gst_label}</span>
+                    <span style="font-weight: 600; color: #333;">{gst_val_fmt}</span>
+                </div>
+                <hr style="margin: 10px 0; border-color: #ddd;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 18px; font-weight: bold; color: #000;">Grand Total</span>
+                    <span style="font-size: 22px; font-weight: bold; color: #FF4B4B;">₹ {grand_total:,.2f}</span>
+                </div>
+            </div>
+            """
             st.markdown(html_content, unsafe_allow_html=True)
             
             st.write("")
