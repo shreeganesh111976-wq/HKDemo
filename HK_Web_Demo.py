@@ -172,6 +172,16 @@ def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase +
 def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
 def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
 
+# --- STRICT GOVT ID VALIDATION ---
+def is_valid_pan(pan):
+    # Pattern: 5 Letters, 4 Digits, 1 Letter (e.g. ABCDE1234F)
+    return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
+
+def is_valid_gstin(gstin):
+    # Pattern: 2 Digits, 5 Letters, 4 Digits, 1 Letter, 1 Alphanum, Z, 1 Alphanum
+    # Example: 24ABCDE1234F1Z5
+    return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
+
 def send_otp_email(to_email, otp_code):
     if "your_email" in SENDER_EMAIL:
         st.error("Setup Error: Sender Email not configured."); return False
@@ -377,49 +387,35 @@ def main_app():
         st.header("⚙️ Company Profile")
         st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
         
-        # --- TAX CONFIGURATION (OUTSIDE FORM TO ENABLE REFRESH) ---
         st.subheader("Tax Configuration")
         col_tax1, col_tax2 = st.columns([1, 2])
-        # We handle the 'Is GST' update immediately here
         current_gst_val = profile.get("Is GST", "No")
         gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], 
                                      index=0 if current_gst_val == "Yes" else 1, 
                                      horizontal=True)
         
-        # If selection changed, we need to update session profile immediately to reflect in form below
-        # Note: We don't save to DB yet, just UI logic
-        
         with st.form("edit_profile"):
-            # --- SECTION 1: Company Details ---
             with st.expander("🏢 Company Details", expanded=True):
                 c1, c2 = st.columns(2)
                 bn = c1.text_input("Business Name", value=profile.get("Business Name", ""))
                 tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
-                
                 c3, c4 = st.columns(2)
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
                 template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], 
                                       index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
-                
                 c5, c6 = st.columns(2)
                 mob = c5.text_input("Business Mobile", value=profile.get("Mobile", ""))
                 em = c6.text_input("Business Email", value=profile.get("Email", ""))
                 
-                # Dynamic Field Based on Radio Button Above
                 tax_id_val = ""
-                tax_id_label = ""
-                
                 if gst_selection == "Yes":
-                    tax_id_label = "GST Number (15 Digits)"
-                    tax_id_val = st.text_input(tax_id_label, value=profile.get("GSTIN", ""))
-                    pan_val = profile.get("PAN", "") # Keep existing PAN if any hidden
+                    tax_id_val = st.text_input("GSTIN (e.g. 24ABCDE1234F1Z5)", value=profile.get("GSTIN", ""))
+                    pan_val = profile.get("PAN", "")
                 else:
-                    tax_id_label = "PAN Number (10 Digits)"
-                    tax_id_val = st.text_input(tax_id_label, value=profile.get("PAN", ""))
+                    tax_id_val = st.text_input("PAN Number (e.g. ABCDE1234F)", value=profile.get("PAN", ""))
                     pan_val = tax_id_val
                     gstin_val = ""
 
-            # --- SECTION 2: Address Details ---
             with st.expander("📍 Address Details", expanded=False):
                 a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
                 a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
@@ -428,40 +424,32 @@ def main_app():
                 dist = ac2.text_input("District", value=profile.get("District", ""))
                 state = ac3.text_input("State", value=profile.get("State", ""))
 
-            # --- SECTION 3: Bank & Payments ---
             with st.expander("🏦 Bank & Payment Details", expanded=False):
                 bc1, bc2 = st.columns(2)
                 bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
-                
                 bc3, bc4 = st.columns(2)
                 acc_no = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
                 ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
-                
                 upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
 
             if st.form_submit_button("💾 Update Company Profile"):
-                # --- VALIDATION LOGIC ---
                 errors = []
-                
-                # 1. Tax Validation
                 final_gstin = ""
                 final_pan = ""
                 
+                # Force Uppercase for clean validation
+                clean_tax_val = tax_id_val.upper()
+                
                 if gst_selection == "Yes":
-                    if len(tax_id_val) != 15: errors.append("GSTIN must be 15 characters.")
-                    final_gstin = tax_id_val
+                    if not is_valid_gstin(clean_tax_val): errors.append("Invalid GSTIN! Format: 24ABCDE1234F1Z5")
+                    final_gstin = clean_tax_val
                 else:
-                    if len(tax_id_val) != 10: errors.append("PAN must be 10 characters.")
-                    final_pan = tax_id_val
+                    if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F (5 letters, 4 numbers, 1 letter)")
+                    final_pan = clean_tax_val
 
-                # 2. Account No Validation
-                if acc_no and not acc_no.isdigit():
-                    errors.append("Account Number must contain only digits.")
-
-                # 3. UPI Validation
-                if upi and "@" not in upi:
-                    errors.append("Invalid UPI ID (must contain '@').")
+                if acc_no and not acc_no.isdigit(): errors.append("Account Number must contain only digits.")
+                if upi and "@" not in upi: errors.append("Invalid UPI ID (must contain '@').")
 
                 if errors:
                     for e in errors: st.error(e)
