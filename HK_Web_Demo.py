@@ -448,26 +448,20 @@ def main_app():
         st.header("🧾 New Invoice")
         df_cust = fetch_user_data("Customers")
         
-        # --- UI LAYOUT FIX (Row 1) ---
-        # 2 parts Customer Select, 0.5 part Add Button, 1 part Date
+        # --- UI LAYOUT FIX ---
         c1, c2, c3 = st.columns([2, 0.5, 1])
         
-        # 1. Customer Select
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
-        sel_cust_name = c1.selectbox("👤 Select Customer", cust_list, label_visibility="collapsed")
-        c1.caption("Select Customer")
-
-        # 2. Add New Button
-        c2.write("") # Spacer
-        if c2.button("➕ Add New", type="primary", help="Go to Customer Master"):
+        sel_cust_name = c1.selectbox("👤 Select Customer", cust_list, label_visibility="visible")
+        
+        c2.write("")
+        c2.write("")
+        if c2.button("➕ Add", type="primary", help="Go to Customer Master"):
              st.toast("Go to 'Customer Master' menu to add new customers.", icon="ℹ️")
 
-        # 3. Date
-        inv_date_obj = c3.date_input("📅 Invoice Date", label_visibility="collapsed")
-        c3.caption("Invoice Date")
+        inv_date_obj = c3.date_input("📅 Invoice Date", format="DD/MM/YYYY") # FORCED FORMAT
         inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
-        # --- UI LAYOUT (Row 2: Shipping Checkbox) ---
         st.write("")
         is_ship_diff = st.checkbox("🚢 Shipping Details")
         
@@ -485,12 +479,10 @@ def main_app():
                     "Addr1": ship_a1, "Addr2": ship_a2, "Addr3": ship_a3
                 }
 
-        # --- UI LAYOUT (Row 3: Invoice No & Last 3) ---
         st.write("")
         st.markdown("🧾 **Invoice Number**")
-        inv_no = st.text_input("Invoice Number", label_visibility="collapsed")
+        inv_no = st.text_input("Invoice Number", label_visibility="collapsed", placeholder="Enter Invoice Number")
         
-        # Logic for Last 3
         df_inv_past = fetch_user_data("Invoices")
         past_str = "No past invoices"
         if not df_inv_past.empty:
@@ -502,21 +494,22 @@ def main_app():
         st.divider()
         st.subheader("📦 Product / Service Details")
 
-        # --- ITEMS TABLE SELF HEALING ---
-        # Fix for StreamlitAPIException: Reset items if columns don't match strict schema
+        # --- CRITICAL FIX: FORCE RESET SESSION STATE ---
+        # This prevents the StreamlitAPIException by clearing old cached table data
         required_cols = ["Description", "HSN", "Qty", "UOM", "Rate", "GST Rate"]
         
+        # Check if table exists AND has correct columns. If not, RESET IT.
         if "items" not in st.session_state or \
            not isinstance(st.session_state.items, pd.DataFrame) or \
            not all(col in st.session_state.items.columns for col in required_cols):
-            st.session_state.items = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
+            st.session_state.items = pd.DataFrame([
+                {"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}
+            ])
         
-        # Enforce Types
-        try:
-             st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
-             st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
-             st.session_state.items["GST Rate"] = st.session_state.items["GST Rate"].astype(float)
-        except: pass
+        # Ensure column types are correct before rendering
+        st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
+        st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
+        st.session_state.items["GST Rate"] = st.session_state.items["GST Rate"].astype(float)
 
         edited_items = st.data_editor(
             st.session_state.items, num_rows="dynamic", use_container_width=True,
@@ -527,10 +520,9 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="bill_editor_master"
+            }, key="bill_editor_master_fixed" # NEW KEY TO FORCE RE-RENDER
         )
 
-        # --- CALCULATIONS ---
         valid_items = edited_items[edited_items["Description"] != ""].copy()
         valid_items["Qty"] = pd.to_numeric(valid_items["Qty"], errors='coerce').fillna(0)
         valid_items["Rate"] = pd.to_numeric(valid_items["Rate"], errors='coerce').fillna(0)
@@ -556,7 +548,6 @@ def main_app():
             is_inter_state = True
             
         cgst_val = 0.0; sgst_val = 0.0; igst_val = 0.0
-        
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
