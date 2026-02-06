@@ -448,20 +448,29 @@ def main_app():
         st.header("🧾 New Invoice")
         df_cust = fetch_user_data("Customers")
         
-        # --- UI LAYOUT FIX ---
-        c1, c2, c3 = st.columns([2, 0.5, 1])
+        # --- ROW 1: Customer (2.5), Add Button (0.5), Date (1) ---
+        c1, c2, c3 = st.columns([2.5, 0.5, 1])
         
         cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
         sel_cust_name = c1.selectbox("👤 Select Customer", cust_list, label_visibility="visible")
         
         c2.write("")
         c2.write("")
-        if c2.button("➕ Add", type="primary", help="Go to Customer Master"):
-             st.toast("Go to 'Customer Master' menu to add new customers.", icon="ℹ️")
+        if c2.button("➕", type="primary", help="Add New Customer"):
+             st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
-        inv_date_obj = c3.date_input("📅 Invoice Date", format="DD/MM/YYYY") # FORCED FORMAT
+        inv_date_obj = c3.date_input("📅 Invoice Date", format="DD/MM/YYYY") 
         inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
+        # --- SHOW CUSTOMER DETAILS IF SELECTED ---
+        if sel_cust_name != "Select" and not df_cust.empty:
+            cust_row = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
+            c_info_gst = cust_row.get("GSTIN", "N/A")
+            c_info_addr = f"{cust_row.get('Address 1','')}, {cust_row.get('Address 2','')}"
+            c_info_mob = cust_row.get("Mobile", "N/A")
+            st.info(f"**GSTIN:** {c_info_gst} | **Mobile:** {c_info_mob} | **Addr:** {c_info_addr}")
+
+        # --- ROW 2: Shipping Checkbox ---
         st.write("")
         is_ship_diff = st.checkbox("🚢 Shipping Details")
         
@@ -479,9 +488,12 @@ def main_app():
                     "Addr1": ship_a1, "Addr2": ship_a2, "Addr3": ship_a3
                 }
 
+        # --- ROW 3: Invoice No (Small) ---
         st.write("")
         st.markdown("🧾 **Invoice Number**")
-        inv_no = st.text_input("Invoice Number", label_visibility="collapsed", placeholder="Enter Invoice Number")
+        # Creating a small column for invoice number (approx 1.3x date size)
+        ic1, ic2 = st.columns([1.3, 3]) 
+        inv_no = ic1.text_input("Invoice Number", label_visibility="collapsed", placeholder="Enter Inv No")
         
         df_inv_past = fetch_user_data("Invoices")
         past_str = "No past invoices"
@@ -494,11 +506,9 @@ def main_app():
         st.divider()
         st.subheader("📦 Product / Service Details")
 
-        # --- CRITICAL FIX: FORCE RESET SESSION STATE ---
-        # This prevents the StreamlitAPIException by clearing old cached table data
+        # --- SAFE TABLE RENDER ---
         required_cols = ["Description", "HSN", "Qty", "UOM", "Rate", "GST Rate"]
         
-        # Check if table exists AND has correct columns. If not, RESET IT.
         if "items" not in st.session_state or \
            not isinstance(st.session_state.items, pd.DataFrame) or \
            not all(col in st.session_state.items.columns for col in required_cols):
@@ -506,10 +516,10 @@ def main_app():
                 {"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}
             ])
         
-        # Ensure column types are correct before rendering
-        st.session_state.items["Qty"] = st.session_state.items["Qty"].astype(float)
-        st.session_state.items["Rate"] = st.session_state.items["Rate"].astype(float)
-        st.session_state.items["GST Rate"] = st.session_state.items["GST Rate"].astype(float)
+        # --- SAFE TYPE CASTING (Fix for TypeError) ---
+        st.session_state.items["Qty"] = pd.to_numeric(st.session_state.items["Qty"], errors='coerce').fillna(0.0)
+        st.session_state.items["Rate"] = pd.to_numeric(st.session_state.items["Rate"], errors='coerce').fillna(0.0)
+        st.session_state.items["GST Rate"] = pd.to_numeric(st.session_state.items["GST Rate"], errors='coerce').fillna(0.0)
 
         edited_items = st.data_editor(
             st.session_state.items, num_rows="dynamic", use_container_width=True,
@@ -520,10 +530,11 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="bill_editor_master_fixed" # NEW KEY TO FORCE RE-RENDER
+            }, key="bill_editor_master_final"
         )
 
         valid_items = edited_items[edited_items["Description"] != ""].copy()
+        # Safe calc again just in case new rows are added
         valid_items["Qty"] = pd.to_numeric(valid_items["Qty"], errors='coerce').fillna(0)
         valid_items["Rate"] = pd.to_numeric(valid_items["Rate"], errors='coerce').fillna(0)
         valid_items["GST Rate"] = pd.to_numeric(valid_items["GST Rate"], errors='coerce').fillna(0)
