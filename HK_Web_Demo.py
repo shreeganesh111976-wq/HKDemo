@@ -33,29 +33,40 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema (adds missing columns if needed)."""
     conn = get_db_connection()
+    
+    # Define expected columns for each sheet
+    schema = {
+        "Users": [
+            "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
+            "Mobile", "Email", "Template", 
+            "Addr1", "Addr2", "Pincode", "District", "State", 
+            "Bank Name", "Branch", "Account No", "IFSC", "UPI"
+        ],
+        "Customers": ["UserID", "Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"],
+        "Invoices": ["UserID", "Bill No", "Date", "Buyer Name", "Invoice Value", "Taxable", "Items"],
+        "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
+        "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
+    }
+
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
+        
+        # --- SELF HEALING: Add missing columns if sheet exists but is old ---
+        if worksheet_name in schema:
+            expected_cols = schema[worksheet_name]
+            # Ensure dataframe has all expected columns, fill missing with empty string
+            for col in expected_cols:
+                if col not in df.columns:
+                    df[col] = ""
+            # Reorder to match schema for consistency
+            df = df[expected_cols + [c for c in df.columns if c not in expected_cols]]
+            
         return df
     except Exception:
-        # Default columns definition
-        if worksheet_name == "Users": 
-            cols = [
-                "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
-                "Mobile", "Email", "Template", 
-                "Addr1", "Addr2", "Pincode", "District", "State", 
-                "Bank Name", "Branch", "Account No", "IFSC", "UPI"
-            ]
-        elif worksheet_name == "Customers": 
-            cols = ["UserID", "Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
-        elif worksheet_name == "Invoices": 
-            cols = ["UserID", "Bill No", "Date", "Buyer Name", "Invoice Value", "Taxable", "Items"]
-        elif worksheet_name == "Receipts": 
-            cols = ["UserID", "Date", "Party Name", "Amount", "Note"]
-        elif worksheet_name == "Inward": 
-            cols = ["UserID", "Date", "Supplier Name", "Total Value"]
-        else: 
-            cols = []
+        # If sheet doesn't exist, create empty DF with correct columns
+        cols = schema.get(worksheet_name, [])
         return pd.DataFrame(columns=cols)
 
 def fetch_user_data(worksheet_name):
@@ -328,14 +339,17 @@ def main_app():
         # --- 1. IMPORT / EXPORT / TEMPLATE SECTION (Updated Layout) ---
         st.write("### 📤 Import / Export Data")
         
-        # CHANGED: 2 Columns instead of 3 (1: Stacked Buttons, 2: Upload)
         c_downloads, c_upload = st.columns([1, 2])
         
         with c_downloads:
             # Export Logic (Excel)
             cust_df = fetch_user_data("Customers")
             export_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
-            final_export = cust_df[export_cols] if not cust_df.empty else pd.DataFrame(columns=export_cols)
+            
+            # --- FIX: ENSURE COLUMNS EXIST ---
+            # If sheet is empty/new, this ensures no KeyError
+            final_export = cust_df[export_cols] if not cust_df.empty and all(col in cust_df.columns for col in export_cols) else pd.DataFrame(columns=export_cols)
+            
             excel_data = to_excel_bytes(final_export)
             
             st.download_button(
