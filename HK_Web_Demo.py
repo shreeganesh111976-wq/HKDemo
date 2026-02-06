@@ -28,7 +28,7 @@ st.markdown("""
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
-        border-radius: 10px; 
+        border-radius: 8px; 
         border: 1px solid #e0e0e0; 
         margin-top: 20px;
         font-family: sans-serif;
@@ -50,8 +50,6 @@ st.markdown("""
         padding-top: 10px; 
         color: #000;
     }
-    /* Fix Button alignment in columns */
-    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
     .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
@@ -84,7 +82,6 @@ def get_db_connection():
 def fetch_data(worksheet_name):
     """Fetches data and enforces schema."""
     conn = get_db_connection()
-    # Define expected columns
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -469,9 +466,9 @@ def main_app():
         st.markdown(f"<div class='bill-header'>🧾 New Invoice</div>", unsafe_allow_html=True)
         df_cust = fetch_user_data("Customers")
         
-        # --- UI LAYOUT FIXED FOR NO OVERLAP ---
-        # Widen Column 1 (60%), Narrow Col 2 (15%), Med Col 3 (25%) to prevent overlap
-        c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
+        # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
+        # 55% Customer, 15% Add Button, 30% Date = 100% total width
+        c1, c2, c3 = st.columns([0.55, 0.15, 0.30], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -480,8 +477,8 @@ def main_app():
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
-            # Add New Button in its own column, bottom aligned
-            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            # Button aligned to bottom to sit flat with input boxes
+            if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
@@ -508,8 +505,8 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-        # Narrow column for Invoice No
-        ic1, ic2 = st.columns([0.3, 0.7]) 
+        # Narrow column for Invoice No to match your screenshot
+        ic1, ic2 = st.columns([0.4, 0.6]) 
         
         with ic1:
             val_inv = st.session_state.bm_invoice_no if "bm_invoice_no" in st.session_state else ""
@@ -526,6 +523,7 @@ def main_app():
         st.divider()
         st.markdown("#### 📦 Product / Service Details")
 
+        # --- RESET LOGIC ---
         if st.session_state.reset_invoice_trigger:
             st.session_state.invoice_items_grid = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
             st.session_state.bm_invoice_no = "" 
@@ -544,7 +542,7 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="final_invoice_editor_polished_v7"
+            }, key="final_invoice_editor_polished_v8"
         )
 
         valid_items = edited_items[edited_items["Description"] != ""].copy()
@@ -573,17 +571,19 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML FIX) ---
+        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML FIX - NO INDENTATION) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
-            # Construct Flexbox HTML (No indentation to prevent code blocks)
-            gst_row = f"<div class='summary-row'><span>IGST:</span><span>₹ {igst_val:,.2f}</span></div>" if is_inter_state else f"<div class='summary-row'><span>CGST+SGST:</span><span>₹ {cgst_val+sgst_val:,.2f}</span></div>"
+            # Construct Flexbox HTML (FLAT STRING TO PREVENT ERRORS)
+            gst_label = "IGST" if is_inter_state else "CGST+SGST"
+            gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
             
+            # NO INDENTATION HERE TO FIX "RAW HTML" BUG
             html_content = f"""<div class='bill-summary-box'>
 <div class='summary-row'><span>Sub Total:</span><span>₹ {total_taxable:,.2f}</span></div>
-{gst_row}
+<div class='summary-row'><span>{gst_label}:</span><span>{gst_val_fmt}</span></div>
 <div class='total-row'><span>Total:</span><span>₹ {grand_total:,.2f}</span></div>
 </div>"""
             st.markdown(html_content, unsafe_allow_html=True)
