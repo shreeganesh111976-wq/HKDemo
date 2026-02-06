@@ -67,6 +67,21 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
+# --- HELPER: INDIAN CURRENCY FORMATTER ---
+def format_indian_currency(amount):
+    try: amount = float(amount)
+    except: return "₹ 0.00"
+    s = "{:.2f}".format(amount)
+    parts = s.split('.')
+    integer_part = parts[0]
+    if len(integer_part) > 3:
+        last_three = integer_part[-3:]
+        rest = integer_part[:-3]
+        rest = re.sub(r"\B(?=(\d{2})+(?!\d))", ",", rest)
+        formatted_integer = rest + "," + last_three
+    else: formatted_integer = integer_part
+    return f"₹ {formatted_integer}.{parts[1]}"
+
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
 def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
@@ -395,7 +410,7 @@ def main_app():
         total_sales = 0
         if not df_inv.empty and "Grand Total" in df_inv.columns: 
             total_sales = pd.to_numeric(df_inv["Grand Total"], errors='coerce').sum()
-        st.metric("Total Sales", f"₹ {total_sales:,.0f}")
+        st.metric("Total Sales", format_indian_currency(total_sales))
         st.dataframe(df_inv.tail(5), use_container_width=True)
 
     elif choice == "Customer Master":
@@ -574,14 +589,15 @@ def main_app():
         
         with c_totals:
             gst_label = "IGST" if is_inter_state else "CGST+SGST"
-            gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
+            gst_val_numeric = igst_val if is_inter_state else (cgst_val + sgst_val)
+            gst_val_fmt = format_indian_currency(gst_val_numeric)
             
             # PROFESSIONAL CARD DESIGN (Dark Sidebar Style)
             html_content = f"""
             <div style="background-color: #F0F2F6; padding: 20px; border-radius: 15px; border-left: 5px solid #FF4B4B;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                     <span style="font-weight: 500; color: #555;">Sub Total</span>
-                    <span style="font-weight: 600; color: #333;">₹ {total_taxable:,.2f}</span>
+                    <span style="font-weight: 600; color: #333;">{format_indian_currency(total_taxable)}</span>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
                     <span style="font-weight: 500; color: #555;">{gst_label}</span>
@@ -590,7 +606,7 @@ def main_app():
                 <hr style="margin: 10px 0; border-color: #ddd;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 18px; font-weight: bold; color: #000;">Grand Total</span>
-                    <span style="font-size: 22px; font-weight: bold; color: #FF4B4B;">₹ {grand_total:,.2f}</span>
+                    <span style="font-size: 22px; font-weight: bold; color: #FF4B4B;">{format_indian_currency(grand_total)}</span>
                 </div>
             </div>
             """
@@ -620,7 +636,7 @@ def main_app():
                     contact = f"{profile.get('Mobile','')}"
                     msg_body = f"""Hi *{sel_cust_name}*,
 
-Greetings from *{firm_name}*. I’m sending over the invoice *{inv_no}* dated *{inv_date_str}* for *₹{grand_total:,.2f}*. The details are included in the attachment for your review.
+Greetings from *{firm_name}*. I’m sending over the invoice *{inv_no}* dated *{inv_date_str}* for *{format_indian_currency(grand_total)}*. The details are included in the attachment for your review.
 
 Thanks again for your cooperation and continued support.
 
@@ -677,7 +693,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 total_billed = pd.to_numeric(df_inv[df_inv["Buyer Name"] == sel_cust]["Grand Total"], errors='coerce').sum()
             if not df_rec.empty and "Amount" in df_rec.columns:
                 total_paid = pd.to_numeric(df_rec[df_rec["Party Name"] == sel_cust]["Amount"], errors='coerce').sum()
-            st.metric("Pending Balance", f"₹ {total_billed - total_paid:,.2f}")
+            st.metric("Pending Balance", format_indian_currency(total_billed - total_paid))
             with st.expander("Add Receipt"):
                 amt = st.number_input("Amount Received")
                 if st.button("Save Receipt"):
