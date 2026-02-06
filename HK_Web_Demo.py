@@ -24,16 +24,18 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
     .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
     
-    /* SUMMARY BOX STYLING - MATCHING STREAMLIT FONT */
+    /* SUMMARY BOX STYLING - ROBOTO FONT */
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
         border-radius: 8px; 
         border: 1px solid #e0e0e0; 
         margin-top: 20px;
-        font-family: "Source Sans Pro", sans-serif; /* FORCE FONT MATCH */
+        font-family: 'Roboto', sans-serif; 
     }
     
     .summary-row {
@@ -42,7 +44,7 @@ st.markdown("""
         margin-bottom: 8px;
         font-size: 16px;
         color: #333;
-        font-family: "Source Sans Pro", sans-serif;
+        font-family: 'Roboto', sans-serif;
     }
     
     .total-row { 
@@ -54,7 +56,7 @@ st.markdown("""
         margin-top: 10px; 
         padding-top: 10px; 
         color: #000;
-        font-family: "Source Sans Pro", sans-serif;
+        font-family: 'Roboto', sans-serif;
     }
     
     /* Button Width Fix */
@@ -475,26 +477,25 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 60% Customer, 15% Add Button, 25% Date = 100% total width
-        c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
+        # 55% Customer, 15% Add Button, 30% Date = 100% total width
+        c1, c2, c3 = st.columns([0.55, 0.15, 0.30], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
-            # Add spacer line
-            st.write("") 
+            st.write("") # Spacer line 1
             cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
             def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
             # Button aligned to bottom to sit flat with input boxes
-            st.write("") 
-            st.write("") 
+            st.write("") # Spacer line 1
+            st.write("") # Spacer line 2 to push button down
             if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
-            st.write("") # Spacer line
+            st.write("") # Spacer line 1
             inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
             inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
@@ -518,7 +519,7 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-        st.write("") # Spacer line
+        st.write("") # Spacer line 1
         
         # Narrow column for Invoice No to match your screenshot
         ic1, ic2 = st.columns([0.4, 0.6]) 
