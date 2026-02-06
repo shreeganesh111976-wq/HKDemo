@@ -33,7 +33,9 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
+    
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -54,6 +56,7 @@ def fetch_data(worksheet_name):
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
     }
+
     try:
         df = conn.read(worksheet=worksheet_name, ttl=0)
         if worksheet_name in schema:
@@ -129,6 +132,8 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, inv_date, totals, ship_det
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     w, h = A4
+    
+    # Header
     c.setFont("Helvetica-Bold", 18)
     c.drawCentredString(w/2, h-50, str(seller.get('Business Name', 'My Firm')))
     c.setFont("Helvetica", 10)
@@ -243,6 +248,7 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
+# --- SESSION STATE ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
 if "user_profile" not in st.session_state: st.session_state.user_profile = {}
 if "auth_mode" not in st.session_state: st.session_state.auth_mode = "login"
@@ -250,6 +256,7 @@ if "reg_success_msg" not in st.session_state: st.session_state.reg_success_msg =
 if "otp_generated" not in st.session_state: st.session_state.otp_generated = None
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
+if "last_generated_invoice" not in st.session_state: st.session_state.last_generated_invoice = None
 
 def login_page():
     st.markdown("<h1 style='text-align:center;'>🔐 HisaabKeeper Login</h1>", unsafe_allow_html=True)
@@ -413,12 +420,17 @@ def main_app():
         if c2.button("➕", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
         inv_date_obj = c3.date_input("📅 Invoice Date", format="DD/MM/YYYY") 
         inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
+        
+        cust_state = ""
+        cust_gstin = ""
+        
         if sel_cust_name != "Select" and not df_cust.empty:
             cust_row = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
-            c_info_gst = cust_row.get("GSTIN", "N/A")
+            cust_gstin = str(cust_row.get("GSTIN", ""))
+            cust_state = str(cust_row.get("State", ""))
             c_info_addr = f"{cust_row.get('Address 1','')}, {cust_row.get('Address 2','')}"
             c_info_mob = cust_row.get("Mobile", "N/A")
-            st.info(f"**GSTIN:** {c_info_gst} | **Mobile:** {c_info_mob} | **Addr:** {c_info_addr}")
+            st.info(f"**GSTIN:** {cust_gstin if cust_gstin else 'Unregistered'} | **Mobile:** {c_info_mob} | **Addr:** {c_info_addr}")
 
         st.write("")
         is_ship_diff = st.checkbox("🚢 Shipping Details")
@@ -445,7 +457,7 @@ def main_app():
         st.divider()
         st.subheader("📦 Product / Service Details")
 
-        # --- NEW KEY: invoice_items_grid (CLEAN SLATE) ---
+        # --- KEY UPDATE: CLEAN SLATE RENDER ---
         if "invoice_items_grid" not in st.session_state:
             st.session_state.invoice_items_grid = pd.DataFrame([
                 {"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}
@@ -460,13 +472,10 @@ def main_app():
                 "UOM": st.column_config.SelectboxColumn("UOM", options=["PCS", "KG", "LTR", "MTR", "BOX", "SET"], required=True, default="PCS"),
                 "Rate": st.column_config.NumberColumn("Item Rate", required=True, default=0.0),
                 "GST Rate": st.column_config.NumberColumn("GST Rate %", required=True, default=0.0, min_value=0, max_value=28)
-            }, key="final_invoice_editor"
+            }, key="final_invoice_editor_fixed"
         )
 
-        # --- CALCULATIONS ON EDITED DATA (NOT SESSION STATE) ---
         valid_items = edited_items[edited_items["Description"] != ""].copy()
-        
-        # Calculate using the output DF directly - Safe & Secure
         valid_items["Qty"] = pd.to_numeric(valid_items["Qty"], errors='coerce').fillna(0)
         valid_items["Rate"] = pd.to_numeric(valid_items["Rate"], errors='coerce').fillna(0)
         valid_items["GST Rate"] = pd.to_numeric(valid_items["GST Rate"], errors='coerce').fillna(0)
@@ -479,63 +488,97 @@ def main_app():
         total_tax_val = valid_items["Tax Amount"].sum()
         grand_total = total_taxable + total_tax_val
         
+        # --- IMPROVED TAX LOGIC (GSTIN First) ---
+        user_gstin = profile.get("GSTIN", "")
         user_state = profile.get("State", "").strip().lower()
-        cust_state = ""
-        if sel_cust_name != "Select" and not df_cust.empty:
-            c_row = df_cust[df_cust["Name"] == sel_cust_name]
-            if not c_row.empty: cust_state = str(c_row.iloc[0].get("State", "")).strip().lower()
         
         is_inter_state = False
-        if user_state and cust_state and user_state != cust_state: is_inter_state = True
+        
+        # 1. GSTIN Comparison (First 2 digits)
+        if len(user_gstin) >= 2 and len(cust_gstin) >= 2:
+            if user_gstin[:2] != cust_gstin[:2]: is_inter_state = True
+        # 2. State Name Fallback
+        elif user_state and cust_state.strip():
+            if user_state != cust_state.strip().lower(): is_inter_state = True
             
         cgst_val = 0.0; sgst_val = 0.0; igst_val = 0.0
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
+        # --- UI LAYOUT FOR TOTALS & SAVE ---
         st.write("")
-        t1, t2, t3, t4 = st.columns(4)
-        t1.metric("Taxable Value", f"₹ {total_taxable:,.2f}")
-        if is_inter_state: t2.metric("IGST", f"₹ {igst_val:,.2f}")
-        else: t2.metric("CGST", f"₹ {cgst_val:,.2f}"); t3.metric("SGST", f"₹ {sgst_val:,.2f}")
-        t4.metric("Grand Total", f"₹ {grand_total:,.2f}")
+        c_spacer, c_totals = st.columns([1.5, 1])
         
-        st.divider()
-        b1, b2, b3 = st.columns(3)
-        if b1.button("Generate Invoice", type="primary", use_container_width=True):
-            if sel_cust_name == "Select": st.error("Please Select a Customer")
-            elif not inv_no: st.error("Please Enter Invoice Number")
-            elif valid_items.empty: st.error("Please add at least one item")
+        with c_totals:
+            # Replicating the clean look from your image
+            st.markdown(f"**Sub Total:** &nbsp;&nbsp;&nbsp;&nbsp; ₹ {total_taxable:,.2f}")
+            if is_inter_state:
+                st.markdown(f"**IGST:** &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ₹ {igst_val:,.2f}")
             else:
-                items_json = json.dumps(valid_items.to_dict('records'))
-                db_row = {
-                    "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
-                    "Items": items_json, "Total Taxable": total_taxable, 
-                    "CGST": cgst_val, "SGST": sgst_val, "IGST": igst_val, "Grand Total": grand_total,
-                    "Ship Name": ship_data.get("Name",""), "Ship GSTIN": ship_data.get("GSTIN",""),
-                    "Ship Addr1": ship_data.get("Addr1",""), "Ship Addr2": ship_data.get("Addr2",""), "Ship Addr3": ship_data.get("Addr3","")
-                }
-                save_row_to_sheet("Invoices", db_row)
-                st.success("Invoice Generated Successfully!")
-                cust_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
-                totals_dict = {'taxable': total_taxable, 'cgst': cgst_val, 'sgst': sgst_val, 'igst': igst_val, 'total': grand_total}
-                pdf_bytes = generate_pdf_buffer(profile, cust_data, valid_items.to_dict('records'), inv_no, inv_date_str, totals_dict, ship_data)
-                st.download_button("⬇️ Download PDF Invoice", pdf_bytes, f"Invoice_{inv_no}.pdf", "application/pdf", use_container_width=True)
+                st.markdown(f"**CGST+SGST:** &nbsp; ₹ {cgst_val+sgst_val:,.2f}")
+            st.markdown("---")
+            st.markdown(f"### Total: ₹ {grand_total:,.2f}")
+            
+            # --- GENERATE BUTTON ---
+            if st.button("🚀 Save & Generate Invoice", type="primary", use_container_width=True):
+                # DUPLICATE CHECK
+                is_duplicate = False
+                if not df_inv_past.empty and inv_no in df_inv_past["Bill No"].astype(str).values:
+                    is_duplicate = True
+                
+                if sel_cust_name == "Select": st.error("Please Select a Customer")
+                elif not inv_no: st.error("Please Enter Invoice Number")
+                elif is_duplicate: st.error(f"Invoice Number {inv_no} already exists!")
+                elif valid_items.empty: st.error("Please add at least one item")
+                else:
+                    items_json = json.dumps(valid_items.to_dict('records'))
+                    db_row = {
+                        "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
+                        "Items": items_json, "Total Taxable": total_taxable, 
+                        "CGST": cgst_val, "SGST": sgst_val, "IGST": igst_val, "Grand Total": grand_total,
+                        "Ship Name": ship_data.get("Name",""), "Ship GSTIN": ship_data.get("GSTIN",""),
+                        "Ship Addr1": ship_data.get("Addr1",""), "Ship Addr2": ship_data.get("Addr2",""), "Ship Addr3": ship_data.get("Addr3","")
+                    }
+                    save_row_to_sheet("Invoices", db_row)
+                    
+                    # Store Success State
+                    st.session_state.last_generated_invoice = {
+                        "no": inv_no, "date": inv_date_str, "total": grand_total,
+                        "pdf_bytes": generate_pdf_buffer(profile, df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict(), 
+                                                       valid_items.to_dict('records'), inv_no, inv_date_str, 
+                                                       {'taxable': total_taxable, 'cgst': cgst_val, 'sgst': sgst_val, 'igst': igst_val, 'total': grand_total}, ship_data)
+                    }
+                    st.rerun()
 
-        cust_mob = ""
-        if sel_cust_name != "Select" and not df_cust.empty: cust_mob = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Mobile", ""))
-        if cust_mob:
-            wa_msg = f"Hello, Here is your Invoice {inv_no} dated {inv_date_str} for Amount {grand_total}. Thanks!"
-            b2.link_button("📱 WhatsApp", get_whatsapp_link(cust_mob, wa_msg), use_container_width=True)
-        else: b2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="Customer mobile missing")
-
-        cust_email = ""
-        if sel_cust_name != "Select" and not df_cust.empty: cust_email = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Email", ""))
-        if cust_email:
-            mail_sub = f"Invoice {inv_no} from {profile.get('Business Name','')}"
-            mail_body = f"Dear Customer,\n\nPlease find attached invoice {inv_no} dated {inv_date_str}.\nTotal Amount: {grand_total}\n\nRegards"
-            mail_link = f"mailto:{cust_email}?subject={urllib.parse.quote(mail_sub)}&body={urllib.parse.quote(mail_body)}"
-            b3.link_button("📧 Mail", mail_link, use_container_width=True)
-        else: b3.button("📧 Mail", disabled=True, use_container_width=True, help="Customer email missing")
+        # --- SUCCESS ACTIONS (WHATSAPP / EMAIL) ---
+        if st.session_state.last_generated_invoice:
+            last_inv = st.session_state.last_generated_invoice
+            st.success(f"✅ Invoice {last_inv['no']} Generated Successfully!")
+            
+            col_actions = st.columns(3)
+            col_actions[0].download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
+            
+            # WhatsApp
+            cust_mob = ""
+            if sel_cust_name != "Select" and not df_cust.empty:
+                cust_mob = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Mobile", ""))
+            if cust_mob:
+                wa_msg = f"Hello, Here is your Invoice {last_inv['no']} dated {last_inv['date']} for Amount {last_inv['total']}. Thanks!"
+                col_actions[1].link_button("📱 WhatsApp", get_whatsapp_link(cust_mob, wa_msg), use_container_width=True)
+            
+            # Email
+            cust_email = ""
+            if sel_cust_name != "Select" and not df_cust.empty:
+                cust_email = str(df_cust[df_cust["Name"] == sel_cust_name].iloc[0].get("Email", ""))
+            if cust_email:
+                mail_sub = f"Invoice {last_inv['no']} from {profile.get('Business Name','')}"
+                mail_body = f"Dear Customer,\n\nPlease find attached invoice {last_inv['no']}.\nTotal: {last_inv['total']}"
+                mail_link = f"mailto:{cust_email}?subject={urllib.parse.quote(mail_sub)}&body={urllib.parse.quote(mail_body)}"
+                col_actions[2].link_button("📧 Mail", mail_link, use_container_width=True)
+            
+            if st.button("Create New Invoice"):
+                st.session_state.last_generated_invoice = None
+                st.rerun()
 
     elif choice == "Ledger":
         st.header("📒 Ledger")
