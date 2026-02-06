@@ -38,6 +38,7 @@ def fetch_data(worksheet_name):
         df = conn.read(worksheet=worksheet_name, ttl=0)
         return df
     except Exception:
+        # Default columns definition
         if worksheet_name == "Users": 
             cols = [
                 "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -46,7 +47,8 @@ def fetch_data(worksheet_name):
                 "Bank Name", "Branch", "Account No", "IFSC", "UPI"
             ]
         elif worksheet_name == "Customers": 
-            cols = ["UserID", "Name", "GSTIN", "Mobile", "Address 1"]
+            # ADDED NEW COLUMNS FOR CUSTOMER MASTER
+            cols = ["UserID", "Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
         elif worksheet_name == "Invoices": 
             cols = ["UserID", "Bill No", "Date", "Buyer Name", "Invoice Value", "Taxable", "Items"]
         elif worksheet_name == "Receipts": 
@@ -77,6 +79,28 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
     except Exception as e: st.error(f"Error saving to database: {e}")
+
+# Added bulk save for Import feature
+def save_bulk_data(worksheet_name, new_df_chunk):
+    conn = get_db_connection()
+    df = fetch_data(worksheet_name)
+    
+    # Ensure UserID is attached
+    if "UserID" not in new_df_chunk.columns:
+        new_df_chunk["UserID"] = st.session_state["user_id"]
+    else:
+        new_df_chunk["UserID"] = new_df_chunk["UserID"].fillna(st.session_state["user_id"])
+        
+    if df.empty: updated_df = new_df_chunk
+    else: updated_df = pd.concat([df, new_df_chunk], ignore_index=True)
+    
+    try:
+        conn.update(worksheet=worksheet_name, data=updated_df)
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"Error saving bulk data: {e}")
+        return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
@@ -123,7 +147,7 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.setFont("Helvetica", 10)
     c.drawString(40, y_bill-15, str(buyer.get('Name','')))
     c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
-    c.drawString(40, y_bill-45, f"Addr: {buyer.get('Address 1','')}")
+    c.drawString(40, y_bill-45, f"Addr: {buyer.get('Addr1','')}")
 
     c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
     c.setFont("Helvetica", 10)
@@ -174,12 +198,9 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 
 # --- STRICT GOVT ID VALIDATION ---
 def is_valid_pan(pan):
-    # Pattern: 5 Letters, 4 Digits, 1 Letter (e.g. ABCDE1234F)
     return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 
 def is_valid_gstin(gstin):
-    # Pattern: 2 Digits, 5 Letters, 4 Digits, 1 Letter, 1 Alphanum, Z, 1 Alphanum
-    # Example: 24ABCDE1234F1Z5
     return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
 def send_otp_email(to_email, otp_code):
@@ -303,13 +324,72 @@ def main_app():
 
     elif choice == "Customer Master":
         st.header("👥 Customers")
-        with st.expander("Add New Customer"):
-            with st.form("add_c"):
-                name = st.text_input("Name"); gst = st.text_input("GSTIN"); mob = st.text_input("Mobile"); addr = st.text_input("Address")
-                if st.form_submit_button("Save"):
-                    save_row_to_sheet("Customers", {"Name": name, "GSTIN": gst, "Mobile": mob, "Address 1": addr})
-                    st.success("Saved!"); st.rerun()
-        st.dataframe(fetch_user_data("Customers"), use_container_width=True)
+        
+        # --- 1. IMPORT / EXPORT SECTION ---
+        col_imp, col_exp = st.columns(2)
+        with col_exp:
+            # Export Logic
+            cust_df = fetch_user_data("Customers")
+            csv = cust_df.to_csv(index=False).encode('utf-8')
+            st.download_button("⬇️ Export Customer Data (CSV)", data=csv, file_name="customers.csv", mime="text/csv", use_container_width=True)
+        
+        with col_imp:
+            # Import Logic
+            uploaded_file = st.file_uploader("⬆️ Import Customers (CSV)", type=["csv"])
+            if uploaded_file is not None:
+                try:
+                    imp_df = pd.read_csv(uploaded_file)
+                    if st.button("Confirm Import"):
+                        if save_bulk_data("Customers", imp_df):
+                            st.success("Customers Imported Successfully!"); time.sleep(1); st.rerun()
+                except Exception as e: st.error(f"Error reading file: {e}")
+
+        st.divider()
+
+        # --- 2. ADD NEW CUSTOMER SECTION ---
+        st.subheader("Add New Customer")
+        with st.form("add_c"):
+            c_name = st.text_input("👤 Customer Name")
+            
+            # GSTIN with Fetch Button (Visual only)
+            col_gst_in, col_gst_btn = st.columns([3, 1])
+            c_gst = col_gst_in.text_input("🏢 GSTIN")
+            col_gst_btn.write("") # Spacer
+            col_gst_btn.write("") # Spacer
+            if col_gst_btn.button("Fetch Details"):
+                st.toast("Fetch from GST Portal: Coming Soon!", icon="⏳")
+
+            st.markdown("📍 **Address Details**")
+            addr1 = st.text_input("Address Line 1")
+            addr2 = st.text_input("Address Line 2")
+            addr3 = st.text_input("Address Line 3")
+            
+            st.markdown("📞 **Contact Details**")
+            c1, c2 = st.columns(2)
+            mob = c1.text_input("Mobile")
+            email = c2.text_input("Email")
+
+            if st.form_submit_button("Save Customer Data"):
+                if not c_name: st.error("Customer Name is required.")
+                else:
+                    save_row_to_sheet("Customers", {
+                        "Name": c_name, "GSTIN": c_gst, 
+                        "Addr1": addr1, "Addr2": addr2, "Addr3": addr3,
+                        "Mobile": mob, "Email": email
+                    })
+                    st.success("Customer Saved Successfully!"); st.rerun()
+
+        st.divider()
+
+        # --- 3. CUSTOMER DATABASE SECTION ---
+        st.subheader("Customer Database")
+        display_cols = ["Name", "GSTIN", "Addr1", "Addr2", "Addr3", "Mobile", "Email"]
+        
+        # Ensure columns exist before displaying to avoid errors if sheet is empty
+        view_df = fetch_user_data("Customers")
+        existing_cols = [c for c in display_cols if c in view_df.columns]
+        
+        st.dataframe(view_df[existing_cols], use_container_width=True)
 
     elif choice == "Billing":
         st.header("🧾 New Invoice")
@@ -437,15 +517,13 @@ def main_app():
                 errors = []
                 final_gstin = ""
                 final_pan = ""
-                
-                # Force Uppercase for clean validation
                 clean_tax_val = tax_id_val.upper()
                 
                 if gst_selection == "Yes":
                     if not is_valid_gstin(clean_tax_val): errors.append("Invalid GSTIN! Format: 24ABCDE1234F1Z5")
                     final_gstin = clean_tax_val
                 else:
-                    if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F (5 letters, 4 numbers, 1 letter)")
+                    if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F")
                     final_pan = clean_tax_val
 
                 if acc_no and not acc_no.isdigit(): errors.append("Account Number must contain only digits.")
