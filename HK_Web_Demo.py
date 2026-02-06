@@ -50,6 +50,7 @@ st.markdown("""
         padding-top: 10px; 
         color: #000;
     }
+    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
     .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
@@ -467,21 +468,25 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 55% Customer, 15% Add Button, 30% Date = 100% total width
-        c1, c2, c3 = st.columns([0.55, 0.15, 0.30], vertical_alignment="bottom")
+        # 60% Customer, 15% Add Button, 25% Date = 100% total width
+        c1, c2, c3 = st.columns([0.60, 0.15, 0.25])
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
+            st.write("") # Spacer line
             cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
             def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
             # Button aligned to bottom to sit flat with input boxes
-            if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            st.write("") # Spacer line
+            st.write("") # Spacer line (Match Label Height)
+            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
+            st.write("") # Spacer line
             inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
             inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
@@ -505,6 +510,8 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
+        st.write("") # Spacer line
+        
         # Narrow column for Invoice No to match your screenshot
         ic1, ic2 = st.columns([0.4, 0.6]) 
         
@@ -523,7 +530,6 @@ def main_app():
         st.divider()
         st.markdown("#### 📦 Product / Service Details")
 
-        # --- RESET LOGIC ---
         if st.session_state.reset_invoice_trigger:
             st.session_state.invoice_items_grid = pd.DataFrame([{"Description": "", "HSN": "", "Qty": 1.0, "UOM": "PCS", "Rate": 0.0, "GST Rate": 0.0}])
             st.session_state.bm_invoice_no = "" 
