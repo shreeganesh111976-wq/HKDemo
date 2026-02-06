@@ -36,7 +36,7 @@ def fetch_data(worksheet_name):
     """Fetches data and enforces schema (adds missing columns if needed)."""
     conn = get_db_connection()
     
-    # Define expected columns for each sheet
+    # UPDATED SCHEMA TO MATCH YOUR EXCEL HEADERS EXACTLY
     schema = {
         "Users": [
             "UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN",
@@ -44,7 +44,11 @@ def fetch_data(worksheet_name):
             "Addr1", "Addr2", "Pincode", "District", "State", 
             "Bank Name", "Branch", "Account No", "IFSC", "UPI"
         ],
-        "Customers": ["UserID", "Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"],
+        "Customers": [
+            "UserID", "Name", "GSTIN", 
+            "Address 1", "Address 2", "Address 3", 
+            "Mobile", "Email"
+        ],
         "Invoices": ["UserID", "Bill No", "Date", "Buyer Name", "Invoice Value", "Taxable", "Items"],
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
@@ -56,12 +60,13 @@ def fetch_data(worksheet_name):
         # --- SELF HEALING: Add missing columns if sheet exists but is old ---
         if worksheet_name in schema:
             expected_cols = schema[worksheet_name]
-            # Ensure dataframe has all expected columns, fill missing with empty string
+            # Ensure dataframe has all expected columns
             for col in expected_cols:
                 if col not in df.columns:
                     df[col] = ""
-            # Reorder to match schema for consistency
-            df = df[expected_cols + [c for c in df.columns if c not in expected_cols]]
+            
+            # Reorder to match schema exactly (Strict Order)
+            df = df[expected_cols]
             
         return df
     except Exception:
@@ -156,7 +161,10 @@ def generate_pdf_buffer(seller, buyer, items, inv_no, totals):
     c.setFont("Helvetica", 10)
     c.drawString(40, y_bill-15, str(buyer.get('Name','')))
     c.drawString(40, y_bill-30, f"GSTIN: {buyer.get('GSTIN','')}")
-    c.drawString(40, y_bill-45, f"Addr: {buyer.get('Addr1','')}")
+    
+    # Updated to match new column name 'Address 1'
+    buyer_addr = str(buyer.get('Address 1', ''))
+    c.drawString(40, y_bill-45, f"Addr: {buyer_addr}")
 
     c.setFont("Helvetica-Bold", 10); c.drawString(400, y_bill, "Invoice Details:")
     c.setFont("Helvetica", 10)
@@ -222,8 +230,10 @@ def send_otp_email(to_email, otp_code):
 
 # --- EXCEL HELPER ---
 def to_excel_bytes(df):
+    """Saves DataFrame to Excel bytes using openpyxl (better for templates)."""
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+    # Changed engine to 'openpyxl' to avoid file corruption issues on some OS
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
@@ -336,19 +346,26 @@ def main_app():
     elif choice == "Customer Master":
         st.header("👥 Customers")
         
-        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION (Updated Layout) ---
+        # --- 1. IMPORT / EXPORT / TEMPLATE SECTION ---
         st.write("### 📤 Import / Export Data")
         
         c_downloads, c_upload = st.columns([1, 2])
         
+        # Define Columns EXACTLY as per your request
+        # UserID, Name, GSTIN, Address 1, Address 2, Address 3, Mobile, Email
+        # We only export/import the editable fields
+        cust_cols = ["Name", "GSTIN", "Address 1", "Address 2", "Address 3", "Mobile", "Email"]
+        
         with c_downloads:
             # Export Logic (Excel)
             cust_df = fetch_user_data("Customers")
-            export_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
             
-            # --- FIX: ENSURE COLUMNS EXIST ---
-            # If sheet is empty/new, this ensures no KeyError
-            final_export = cust_df[export_cols] if not cust_df.empty and all(col in cust_df.columns for col in export_cols) else pd.DataFrame(columns=export_cols)
+            # --- SAFE EXPORT: CHECK COLS ---
+            # self-healing ensures cols exist, but check just in case
+            if not cust_df.empty and all(col in cust_df.columns for col in cust_cols):
+                final_export = cust_df[cust_cols]
+            else:
+                final_export = pd.DataFrame(columns=cust_cols)
             
             excel_data = to_excel_bytes(final_export)
             
@@ -360,12 +377,10 @@ def main_app():
                 use_container_width=True
             )
 
-            # Spacer
             st.write("")
 
             # Download Template Logic
-            template_cols = ["Name", "GSTIN", "Mobile", "Email", "Addr1", "Addr2", "Addr3"]
-            template_df = pd.DataFrame(columns=template_cols)
+            template_df = pd.DataFrame(columns=cust_cols)
             template_bytes = to_excel_bytes(template_df)
             
             st.download_button(
@@ -377,7 +392,6 @@ def main_app():
             )
 
         with c_upload:
-            # Import Logic (Excel)
             uploaded_file = st.file_uploader("⬆️ Upload Excel", type=["xlsx", "xls"])
             if uploaded_file is not None:
                 try:
@@ -393,7 +407,6 @@ def main_app():
         st.subheader("Add New Customer")
         c_name = st.text_input("👤 Customer Name")
         
-        # GSTIN with Fetch Button
         col_gst_in, col_gst_btn = st.columns([3, 1])
         c_gst = col_gst_in.text_input("🏢 GSTIN")
         col_gst_btn.write("") 
@@ -416,7 +429,7 @@ def main_app():
             else:
                 save_row_to_sheet("Customers", {
                     "Name": c_name, "GSTIN": c_gst, 
-                    "Addr1": addr1, "Addr2": addr2, "Addr3": addr3,
+                    "Address 1": addr1, "Address 2": addr2, "Address 3": addr3,
                     "Mobile": mob, "Email": email
                 })
                 st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
@@ -425,10 +438,12 @@ def main_app():
 
         # --- 3. CUSTOMER DATABASE SECTION ---
         st.subheader("Customer Database")
-        display_cols = ["Name", "GSTIN", "Addr1", "Addr2", "Addr3", "Mobile", "Email"]
         view_df = fetch_user_data("Customers")
-        existing_cols = [c for c in display_cols if c in view_df.columns]
-        st.dataframe(view_df[existing_cols], use_container_width=True)
+        # Display Only Relevant Cols
+        if not view_df.empty:
+            st.dataframe(view_df[cust_cols], use_container_width=True)
+        else:
+            st.info("No customers found.")
 
     elif choice == "Billing":
         st.header("🧾 New Invoice")
