@@ -24,22 +24,27 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
+    /* Font Correction to match Streamlit Native */
+    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; font-family: 'Source Sans Pro', sans-serif; }
+    
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
-        border-radius: 8px; 
+        border-radius: 10px; 
         border: 1px solid #e0e0e0; 
         margin-top: 20px;
-        font-family: sans-serif;
+        font-family: 'Source Sans Pro', sans-serif; /* FORCE FONT MATCH */
     }
+    
     .summary-row {
         display: flex;
         justify-content: space-between;
         margin-bottom: 8px;
         font-size: 16px;
         color: #444;
+        font-family: 'Source Sans Pro', sans-serif;
     }
+    
     .total-row { 
         display: flex;
         justify-content: space-between;
@@ -49,8 +54,10 @@ st.markdown("""
         margin-top: 10px; 
         padding-top: 10px; 
         color: #000;
+        font-family: 'Source Sans Pro', sans-serif;
     }
-    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
+    
+    /* Button width fix */
     .stButton button { width: 100%; }
 </style>
 """, unsafe_allow_html=True)
@@ -81,7 +88,6 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": [
@@ -468,25 +474,21 @@ def main_app():
         df_cust = fetch_user_data("Customers")
         
         # --- UI LAYOUT FIXED: Ratios adjusted to prevent overlap ---
-        # 60% Customer, 15% Add Button, 25% Date = 100% total width
-        c1, c2, c3 = st.columns([0.60, 0.15, 0.25])
+        # 55% Customer, 15% Add Button, 30% Date = 100% total width
+        c1, c2, c3 = st.columns([2, 1, 1], vertical_alignment="bottom")
         
         with c1:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
-            st.write("") # Spacer line
             cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
             def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
             sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
         
         with c2:
             # Button aligned to bottom to sit flat with input boxes
-            st.write("") # Spacer line
-            st.write("") # Spacer line (Match Label Height)
-            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            if st.button("➕ Add New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
-            st.write("") # Spacer line
             inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
             inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
         
@@ -510,8 +512,6 @@ def main_app():
 
         st.write("")
         st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-        st.write("") # Spacer line
-        
         # Narrow column for Invoice No to match your screenshot
         ic1, ic2 = st.columns([0.4, 0.6]) 
         
@@ -650,6 +650,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
+            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
