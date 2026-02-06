@@ -24,25 +24,43 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    /* Global Font Settings */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif;
-    }
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
 
-    .bill-header { 
-        font-size: 26px; 
-        font-weight: 700; 
-        margin-bottom: 20px; 
-        color: #1E1E1E; 
+    .bill-header { font-size: 24px; font-weight: bold; margin-bottom: 20px; color: #333; }
+    
+    /* SUMMARY BOX STYLING - ROBOTO FONT */
+    .bill-summary-box { 
+        background-color: #f9f9f9; 
+        padding: 20px; 
+        border-radius: 8px; 
+        border: 1px solid #e0e0e0; 
+        margin-top: 20px;
+        font-family: 'Roboto', sans-serif; 
+    }
+    
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 16px;
+        color: #333;
+        font-family: 'Roboto', sans-serif;
+    }
+    
+    .total-row { 
+        display: flex;
+        justify-content: space-between;
+        font-size: 20px; 
+        font-weight: bold; 
+        border-top: 1px solid #ccc; 
+        margin-top: 10px; 
+        padding-top: 10px; 
+        color: #000;
+        font-family: 'Roboto', sans-serif;
     }
     
     /* Button Width Fix */
     .stButton button { width: 100%; }
-    
-    /* Column alignment fix */
-    div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -66,6 +84,30 @@ STATE_CODES = {
     "36": "Telangana", "37": "Andhra Pradesh", "38": "Ladakh", "97": "Other Territory",
     "99": "Centre Jurisdiction"
 }
+
+# --- HELPER: INDIAN CURRENCY FORMATTER ---
+def format_indian_currency(amount):
+    """Formats a number to Indian Currency style (e.g. 1,00,000.00)"""
+    try:
+        amount = float(amount)
+    except:
+        return "₹ 0.00"
+        
+    s = "{:.2f}".format(amount)
+    parts = s.split('.')
+    integer_part = parts[0]
+    decimal_part = parts[1]
+    
+    if len(integer_part) > 3:
+        last_three = integer_part[-3:]
+        rest = integer_part[:-3]
+        # Regex to insert commas every 2 digits from right for the rest
+        rest = re.sub(r"\B(?=(\d{2})+(?!\d))", ",", rest)
+        formatted_integer = rest + "," + last_three
+    else:
+        formatted_integer = integer_part
+        
+    return f"₹ {formatted_integer}.{decimal_part}"
 
 # --- GOOGLE SHEETS CONNECTION HANDLER ---
 def get_db_connection():
@@ -299,6 +341,8 @@ if "last_generated_invoice" not in st.session_state: st.session_state.last_gener
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
+# Navigation state
+if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -387,15 +431,27 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
-    choice = st.sidebar.radio("Menu", ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"])
+    # --- NAVIGATION LOGIC ---
+    menu_options = ["Dashboard", "Customer Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
     
+    # Sync radio with session state
+    if st.session_state.menu_selection not in menu_options:
+        st.session_state.menu_selection = "Dashboard"
+        
+    choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
+    
+    # Update state if changed via radio
+    if choice != st.session_state.menu_selection:
+        st.session_state.menu_selection = choice
+        st.rerun()
+
     if choice == "Dashboard":
         st.header("📊 Dashboard")
         df_inv = fetch_user_data("Invoices")
         total_sales = 0
         if not df_inv.empty and "Grand Total" in df_inv.columns: 
             total_sales = pd.to_numeric(df_inv["Grand Total"], errors='coerce').sum()
-        st.metric("Total Sales", f"₹ {total_sales:,.0f}")
+        st.metric("Total Sales", format_indian_currency(total_sales))
         st.dataframe(df_inv.tail(5), use_container_width=True)
 
     elif choice == "Customer Master":
@@ -473,7 +529,9 @@ def main_app():
             # Button aligned to bottom to sit flat with input boxes
             st.write("") # Spacer line 1
             st.write("") # Spacer line 2 to push button down
-            if st.button("➕ New", type="primary", help="Add New Customer"): st.toast("Go to 'Customer Master' to add.", icon="ℹ️")
+            if st.button("➕ New", type="primary", help="Add New Customer"):
+                st.session_state.menu_selection = "Customer Master"
+                st.rerun()
 
         with c3:
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
@@ -568,32 +626,21 @@ def main_app():
         if is_inter_state: igst_val = total_tax_val
         else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (NEW PROFESSIONAL DESIGN) ---
+        # --- UI LAYOUT: RIGHT ALIGNED TOTALS (FLEXBOX HTML FIX - NO INDENTATION) ---
         st.write("")
         c_spacer, c_totals = st.columns([1.5, 1])
         
         with c_totals:
+            # Construct Flexbox HTML (FLAT STRING TO PREVENT ERRORS)
             gst_label = "IGST" if is_inter_state else "CGST+SGST"
-            gst_val_fmt = f"₹ {igst_val:,.2f}" if is_inter_state else f"₹ {cgst_val+sgst_val:,.2f}"
+            gst_val_fmt = format_indian_currency(igst_val) if is_inter_state else format_indian_currency(cgst_val+sgst_val)
             
-            # PROFESSIONAL CARD DESIGN (Dark Sidebar Style)
-            html_content = f"""
-            <div style="background-color: #F0F2F6; padding: 20px; border-radius: 15px; border-left: 5px solid #FF4B4B;">
-                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                    <span style="font-weight: 500; color: #555;">Sub Total</span>
-                    <span style="font-weight: 600; color: #333;">₹ {total_taxable:,.2f}</span>
-                </div>
-                <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
-                    <span style="font-weight: 500; color: #555;">{gst_label}</span>
-                    <span style="font-weight: 600; color: #333;">{gst_val_fmt}</span>
-                </div>
-                <hr style="margin: 10px 0; border-color: #ddd;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 18px; font-weight: bold; color: #000;">Grand Total</span>
-                    <span style="font-size: 22px; font-weight: bold; color: #FF4B4B;">₹ {grand_total:,.2f}</span>
-                </div>
-            </div>
-            """
+            # NO INDENTATION HERE TO FIX "RAW HTML" BUG & MATCH FONT
+            html_content = f"""<div class='bill-summary-box'>
+<div class='summary-row'><span>Sub Total:</span><span>{format_indian_currency(total_taxable)}</span></div>
+<div class='summary-row'><span>{gst_label}:</span><span>{gst_val_fmt}</span></div>
+<div class='total-row'><span>Total:</span><span>{format_indian_currency(grand_total)}</span></div>
+</div>"""
             st.markdown(html_content, unsafe_allow_html=True)
             
             st.write("")
@@ -620,7 +667,7 @@ def main_app():
                     contact = f"{profile.get('Mobile','')}"
                     msg_body = f"""Hi *{sel_cust_name}*,
 
-Greetings from *{firm_name}*. I’m sending over the invoice *{inv_no}* dated *{inv_date_str}* for *₹{grand_total:,.2f}*. The details are included in the attachment for your review.
+Greetings from *{firm_name}*. I’m sending over the invoice *{inv_no}* dated *{inv_date_str}* for *{format_indian_currency(grand_total)}*. The details are included in the attachment for your review.
 
 Thanks again for your cooperation and continued support.
 
@@ -677,7 +724,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 total_billed = pd.to_numeric(df_inv[df_inv["Buyer Name"] == sel_cust]["Grand Total"], errors='coerce').sum()
             if not df_rec.empty and "Amount" in df_rec.columns:
                 total_paid = pd.to_numeric(df_rec[df_rec["Party Name"] == sel_cust]["Amount"], errors='coerce').sum()
-            st.metric("Pending Balance", f"₹ {total_billed - total_paid:,.2f}")
+            st.metric("Pending Balance", format_indian_currency(total_billed - total_paid))
             with st.expander("Add Receipt"):
                 amt = st.number_input("Amount Received")
                 if st.button("Save Receipt"):
