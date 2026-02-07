@@ -27,60 +27,38 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+    /* Global Font Settings */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
 
-    .bill-header { font-size: 26px; font-weight: 700; margin-bottom: 20px; color: #1E1E1E; }
-    
-    /* SUMMARY BOX STYLING - ROBOTO FONT */
-    .bill-summary-box { 
-        background-color: #f9f9f9; 
-        padding: 20px; 
-        border-radius: 8px; 
-        border: 1px solid #e0e0e0; 
-        margin-top: 20px;
-        font-family: 'Roboto', sans-serif; 
+    .bill-header { 
+        font-size: 26px; 
+        font-weight: 700; 
+        margin-bottom: 20px; 
+        color: #1E1E1E; 
     }
     
-    .summary-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 8px;
-        font-size: 16px;
-        color: #333;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    .total-row { 
-        display: flex;
-        justify-content: space-between;
-        font-size: 20px; 
-        font-weight: bold; 
-        border-top: 1px solid #ccc; 
-        margin-top: 10px; 
-        padding-top: 10px; 
-        color: #000;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    /* Button Width & Alignment Fix */
+    /* Button Width Fix */
     .stButton button { width: 100%; }
+    
+    /* Column alignment fix */
     div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CONFIGURATION ---
+# --- EMAIL CONFIGURATION ---
 SENDER_EMAIL = "your_email@gmail.com"  # <--- REPLACE THIS
 SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
+
+# --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
 LOGO_FILE = "logo.png" 
 SIGNATURE_FILE = "signature.png"
 
-# --- STATE CODES ---
+# --- FULL STATE CODES (GST MAPPING) ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -207,29 +185,7 @@ def update_user_profile(updated_profile_dict):
         except Exception as e: st.error(f"Error: {e}"); return False
     return False
 
-# --- PDF GENERATION LOGIC (MULTI-PAGE FIXED & OVERLAP FIXED & SHIP TO & UOM) ---
-def get_invoice_paths_dual(date_obj, invoice_no, party_name, profile_data):
-    year = date_obj.year; month = date_obj.month
-    if month < 4: fy = f"FY {year-1}-{str(year)[-2:]}"
-    else: fy = f"FY {year}-{str(year+1)[-2:]}"
-    month_name = date_obj.strftime("%B")
-    
-    # 1. Main Path
-    base_dir_main = get_save_directory(profile_data, is_letterhead=False)
-    save_path_main = os.path.join(base_dir_main, fy, f"{month_name} {year}")
-    os.makedirs(save_path_main, exist_ok=True)
-    
-    # 2. Letterhead Path
-    base_dir_lh = get_save_directory(profile_data, is_letterhead=True)
-    save_path_lh = os.path.join(base_dir_lh, fy, f"{month_name} {year}")
-    os.makedirs(save_path_lh, exist_ok=True)
-    
-    safe_inv = invoice_no.replace("/", "_").replace("\\", "_")
-    safe_name = "".join(c for c in party_name if c.isalnum() or c in " ._").rstrip()
-    filename = f"{safe_inv}_{safe_name}.pdf"
-    
-    return os.path.join(save_path_main, filename), os.path.join(save_path_lh, filename)
-
+# --- PDF GENERATION LOGIC ---
 def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
     # This function draws the top section and returns the Y-coordinate where the table should start
     
@@ -265,19 +221,27 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
                 c.drawCentredString(center_x, y_contact, f"PAN: {seller.get('PAN', '')}")
                 y_contact -= 12
         
+        # --- ADDRESS FIX: Line 1, Line 2, District State Pincode ---
         c.drawCentredString(center_x, y_contact, seller.get('Addr1', ''))
-        c.drawCentredString(center_x, y_contact-12, seller.get('Addr2', ''))
-        c.drawCentredString(center_x, y_contact-24, f"M: {seller.get('Mobile', '')} | E: {seller.get('Email', '')}")
+        y_contact -= 12
+        c.drawCentredString(center_x, y_contact, seller.get('Addr2', ''))
+        y_contact -= 12
+        # District, State - Pincode
+        full_addr_3 = f"{seller.get('District', '')}, {seller.get('State', '')} - {seller.get('Pincode', '')}"
+        c.drawCentredString(center_x, y_contact, full_addr_3)
+        y_contact -= 12
+        
+        c.drawCentredString(center_x, y_contact, f"M: {seller.get('Mobile', '')} | E: {seller.get('Email', '')}")
     
     title_text = "TAX INVOICE" if seller.get('Is GST', 'No') == 'Yes' else "INVOICE"
     c.setFont(font_header, 14)
-    c.drawCentredString(w/2, h-140, title_text)
+    c.drawCentredString(w/2, h-160, title_text)
     
     if theme != 'Modern' and not is_letterhead:
-        c.line(30, h-145, w-30, h-145)
+        c.line(30, h-165, w-30, h-165)
     
     # --- BILL TO SECTION ---
-    y = h-170
+    y = h-190
     
     # Check for Ship To
     ship_data = buyer.get('Shipping', {})
@@ -326,7 +290,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
             s_addr_y -= 12
             c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr3', '')}")
 
-    # Invoice Details (Moved slightly right if Shipping exists, or keep at far right)
+    # Invoice Details
     x_inv = 400
     c.setFont(font_header, 10); c.drawString(x_inv, y, "Invoice Details:")
     c.setFont(font_body, 10)
@@ -336,8 +300,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
         pos_code = buyer.get('POS Code', '24')
         c.drawString(x_inv, y-45, f"POS: {pos_code}-{STATE_CODES.get(pos_code, '')}")
 
-    # FIX: Return a lower Y value to prevent overlap with address
-    return h - 280 
+    return h - 300 # Adjusted Y for Table Start
 
 def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
     foot_y = 130 
@@ -346,26 +309,21 @@ def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
     c.setFont(font_header, 10); c.drawString(40, foot_y+75, "Bank Details:")
     c.setFont(font_body, 9)
     c.drawString(40, foot_y+60, f"Bank: {seller.get('Bank Name','')}")
-    if seller.get('Branch Name'):
-        c.drawString(40, foot_y+48, f"Branch: {seller.get('Branch Name','')}")
-        c.drawString(40, foot_y+36, f"A/c: {seller.get('Account No','')}")
-        c.drawString(40, foot_y+24, f"IFSC: {seller.get('IFSC','')}")
-    else:
-        c.drawString(40, foot_y+48, f"A/c: {seller.get('Account No','')}")
-        c.drawString(40, foot_y+36, f"IFSC: {seller.get('IFSC','')}")
     
-    sign_y = foot_y + 50 # Moved UP
+    # --- BRANCH NAME ADDED ---
+    c.drawString(40, foot_y+48, f"Branch: {seller.get('Branch', '')}") 
+    c.drawString(40, foot_y+36, f"A/c: {seller.get('Account No','')}")
+    c.drawString(40, foot_y+24, f"IFSC: {seller.get('IFSC','')}")
+    
+    sign_y = foot_y + 50 
     c.drawRightString(w-40, sign_y, f"For, {seller.get('Business Name', '')}")
     
-    # INSERT SIGNATURE
     if os.path.exists(SIGNATURE_FILE):
         try:
             sig_img = ImageReader(SIGNATURE_FILE)
-            # Increased height and adjusted Y to fit in wider gap
             c.drawImage(sig_img, w-160, sign_y-55, width=1.4*inch, height=0.7*inch, mask='auto', preserveAspectRatio=True)
         except: pass
 
-    # Moved "Authorized Signatory" DOWN to create gap
     c.drawRightString(w-40, sign_y-60, "Authorized Signatory")
     
     term_y = 50
@@ -373,7 +331,6 @@ def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
     terms = ["(1) We declare that this invoice shows the actual price of the goods/services described.", "(2) Subject to Local Jurisdiction.", "(3) Our responsibility ceases as soon as goods are delivered."]
     for term in terms: c.drawString(40, term_y, term); term_y -= 10
     
-    # --- PROMOTIONAL FOOTER ---
     c.setFillColor(colors.grey)
     c.setFont(font_body, 7)
     footer_msg = "This document is generated using HisaabKeeper to get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whats app us on +91 6353953790"
@@ -384,16 +341,17 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     c = canvas.Canvas(path, pagesize=A4)
     w, h = A4 
     
-    theme = seller.get('Template', 'Simple')
+    # Use 'Template' key to match Company Profile
+    theme = seller.get('Template', 'Basic') # Mapped 'Simple' -> 'Basic' logic below
+    if theme == "Simple": theme = "Basic" # Normalize
     
-    # Fonts & Colors
     if theme == 'Modern': 
         font_header = "Helvetica-Bold"; font_body = "Helvetica"
         accent_color = HexColor('#2C3E50'); text_color_head = colors.white; grid_color = colors.lightgrey
     elif theme == 'Formal':
         font_header = "Times-Bold"; font_body = "Times-Roman"
         accent_color = colors.white; text_color_head = colors.black; grid_color = colors.black
-    else: 
+    else: # Basic
         font_header = "Helvetica-Bold"; font_body = "Helvetica"
         accent_color = colors.grey; text_color_head = colors.whitesmoke; grid_color = colors.black
 
@@ -429,7 +387,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     
     data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
     
-    # Styles
     last_col_idx = len(header) - 1
     style_cmds = [
         ('FONTNAME', (0,0), (-1,-1), font_body),
@@ -490,79 +447,51 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
             ('FONTNAME', (0,0), (-1,0), font_header), ('FONTNAME', (0, -1), (-1, -1), font_header)
         ]))
 
-    # --- 3. CALCULATE PAGES ---
-    # Metrics - Header Buffer 
-    header_bottom_y = h - 280 
+    # --- 3. DRAW PAGES ---
+    header_bottom_y = h - 300 
     footer_height = 230 
     usable_height = header_bottom_y - footer_height
     
-    # Split Main Table
     table_parts = []
     current_data = main_table
     while True:
         w_t, h_t = current_data.wrap(w, h)
         if h_t <= usable_height:
-            table_parts.append(current_data)
-            break
+            table_parts.append(current_data); break
         else:
             result = current_data.split(w, usable_height)
-            if len(result) == 2:
-                table_parts.append(result[0])
-                current_data = result[1]
-            else:
-                table_parts.append(current_data) # Failsafe
-                break
+            if len(result) == 2: table_parts.append(result[0]); current_data = result[1]
+            else: table_parts.append(current_data); break
     
-    # Calculate Total Pages
     total_pages = len(table_parts)
     hsn_needs_new_page = False
     
     if hsn_table:
         htw, hth = hsn_table.wrapOn(c, w, h)
-        # Calculate space left on the last page of main items
         last_part_h = table_parts[-1].wrapOn(c, w, h)[1]
-        space_left = usable_height - last_part_h - 20 # 20 padding
-        
-        if space_left < hth:
+        if (usable_height - last_part_h - 20) < hth:
             total_pages += 1
             hsn_needs_new_page = True
 
-    # --- 4. DRAW PAGES ---
     for page_idx, part in enumerate(table_parts):
-        # Header
         y_start = draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body)
-        
-        # Main Table Part
         pw, ph = part.wrapOn(c, w, h)
         part.drawOn(c, 30, y_start - ph)
         current_y = y_start - ph - 20
-        
-        # Footer
         draw_footer_on_canvas(c, w, h, seller, font_header, font_body)
-        
-        # Page Number
         c.setFont(font_body, 8)
         c.drawCentredString(w/2, 25, f"Page {page_idx+1} of {total_pages}") 
         
-        # Check if we are on the last PART of the main table
         if page_idx == len(table_parts) - 1:
             if hsn_table:
                 htw, hth = hsn_table.wrapOn(c, w, h)
-                if not hsn_needs_new_page:
-                    # Draw HSN on this same page
-                    hsn_table.drawOn(c, 30, current_y - hth)
+                if not hsn_needs_new_page: hsn_table.drawOn(c, 30, current_y - hth)
                 else:
-                    # HSN goes to next page
                     c.showPage()
-                    
-                    # New Page Header/Footer
                     y_start_new = draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body)
                     draw_footer_on_canvas(c, w, h, seller, font_header, font_body)
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
-                    
-                    # Draw HSN Table at the top of usable area
                     hsn_table.drawOn(c, 30, y_start_new - hth)
-
         c.showPage()
     
     c.save()
@@ -984,6 +913,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
+            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
