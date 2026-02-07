@@ -27,38 +27,60 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    /* Global Font Settings */
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
 
-    .bill-header { 
-        font-size: 26px; 
-        font-weight: 700; 
-        margin-bottom: 20px; 
-        color: #1E1E1E; 
+    .bill-header { font-size: 26px; font-weight: 700; margin-bottom: 20px; color: #1E1E1E; }
+    
+    /* SUMMARY BOX STYLING - ROBOTO FONT */
+    .bill-summary-box { 
+        background-color: #f9f9f9; 
+        padding: 20px; 
+        border-radius: 8px; 
+        border: 1px solid #e0e0e0; 
+        margin-top: 20px;
+        font-family: 'Roboto', sans-serif; 
     }
     
-    /* Button Width Fix */
-    .stButton button { width: 100%; }
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 16px;
+        color: #333;
+        font-family: 'Roboto', sans-serif;
+    }
     
-    /* Column alignment fix */
+    .total-row { 
+        display: flex;
+        justify-content: space-between;
+        font-size: 20px; 
+        font-weight: bold; 
+        border-top: 1px solid #ccc; 
+        margin-top: 10px; 
+        padding-top: 10px; 
+        color: #000;
+        font-family: 'Roboto', sans-serif;
+    }
+    
+    /* Button Width & Alignment Fix */
+    .stButton button { width: 100%; }
     div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- EMAIL CONFIGURATION ---
+# --- CONFIGURATION ---
 SENDER_EMAIL = "your_email@gmail.com"  # <--- REPLACE THIS
 SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
-
-# --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
-LOGO_FILE = "logo.png"  # Placeholder for file path logic
-SIGNATURE_FILE = "signature.png" # Placeholder for file path logic
+LOGO_FILE = "logo.png" 
+SIGNATURE_FILE = "signature.png"
 
-# --- FULL STATE CODES (GST MAPPING) ---
+# --- STATE CODES ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -72,7 +94,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPER: INDIAN CURRENCY FORMATTER ---
+# --- HELPER FUNCTIONS ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -87,16 +109,44 @@ def format_indian_currency(amount):
     else: formatted_integer = integer_part
     return f"₹ {formatted_integer}.{parts[1]}"
 
-# --- HELPER: SAVE DIRECTORY (Placeholder for compatibility) ---
 def get_save_directory(profile_data, is_letterhead=False):
     return "invoices_letterhead" if is_letterhead else "invoices_main"
 
-# --- GOOGLE SHEETS CONNECTION HANDLER ---
+def get_whatsapp_web_link(mobile, msg):
+    if not mobile: return None
+    clean = re.sub(r'\D', '', str(mobile))
+    if len(clean) == 10: clean = "91" + clean
+    return f"https://web.whatsapp.com/send?phone={clean}&text={urllib.parse.quote(msg)}"
+
+def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
+def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
+def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
+def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
+def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
+
+def send_otp_email(to_email, otp_code):
+    if "your_email" in SENDER_EMAIL: st.error("Setup Error: Sender Email not configured."); return False
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL; msg['To'] = to_email; msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
+        body = f"Hello,\n\nOTP: {otp_code}\n\nRegards,\nHisaabKeeper"
+        msg.attach(MIMEText(body, 'plain'))
+        server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD); server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
+        server.quit(); return True
+    except Exception as e: st.error(f"Failed to send email: {e}"); return False
+
+def to_excel_bytes(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
+
+# --- DATABASE HANDLERS ---
 def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -142,9 +192,7 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except Exception as e:
-        st.error(f"Error: {e}")
-        return False
+    except Exception as e: st.error(f"Error: {e}"); return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
@@ -237,7 +285,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     # Draw "Bill To"
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
-    c.drawString(40, y-15, buyer['Name'])
+    c.drawString(40, y-15, buyer.get('Name', ''))
     
     if seller.get('Is GST', 'No') == 'Yes':
         c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
@@ -283,7 +331,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     c.setFont(font_header, 10); c.drawString(x_inv, y, "Invoice Details:")
     c.setFont(font_body, 10)
     c.drawString(x_inv, y-15, f"Inv No: {inv_no}")
-    c.drawString(x_inv, y-30, f"Date: {buyer['Date']}")
+    c.drawString(x_inv, y-30, f"Date: {buyer.get('Date','')}")
     if seller.get('Is GST', 'No') == 'Yes':
         pos_code = buyer.get('POS Code', '24')
         c.drawString(x_inv, y-45, f"POS: {pos_code}-{STATE_CODES.get(pos_code, '')}")
@@ -336,7 +384,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     c = canvas.Canvas(path, pagesize=A4)
     w, h = A4 
     
-    theme = seller.get('Template', 'Simple') # Changed 'Theme' to 'Template' to match Profile
+    theme = seller.get('Template', 'Simple')
     
     # Fonts & Colors
     if theme == 'Modern': 
@@ -373,7 +421,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     summary_start = len(data)
     if is_gst_bill:
         data.append(['Taxable Value', '', '', '', '', '', f"{totals['taxable']:.2f}"])
-        if totals.get('is_intra', True): # Safe access
+        if totals.get('is_intra', True):
             data.append(['Add: CGST', '', '', '', '', '', f"{totals['cgst']:.2f}"])
             data.append(['Add: SGST', '', '', '', '', '', f"{totals['sgst']:.2f}"])
         else:
@@ -416,7 +464,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
         tax_summary = {}
         for item in items:
             hsn_code = str(item.get('HSN', ''))
-            gst_rate = float(item.get('GST Rate', 0)) # Fixed key name
+            gst_rate = float(item.get('GST Rate', 0))
             taxable_val = float(item['Qty']) * float(item['Rate'])
             key = (hsn_code, gst_rate)
             if key not in tax_summary: tax_summary[key] = {'taxable': 0.0, 'cgst': 0.0, 'sgst': 0.0, 'igst': 0.0, 'total': 0.0}
@@ -465,7 +513,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                 table_parts.append(current_data) # Failsafe
                 break
     
-    # Calculate Total Pages (Checking if HSN needs a new page)
+    # Calculate Total Pages
     total_pages = len(table_parts)
     hsn_needs_new_page = False
     
@@ -518,37 +566,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
         c.showPage()
     
     c.save()
-
-def get_whatsapp_web_link(mobile, msg):
-    if not mobile: return None
-    clean_num = re.sub(r'\D', '', str(mobile))
-    if not clean_num.startswith("91") and len(clean_num) == 10:
-        clean_num = "91" + clean_num
-    return f"https://web.whatsapp.com/send?phone={clean_num}&text={urllib.parse.quote(msg)}"
-
-def generate_unique_id(): return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
-def is_valid_email(email): return re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email) is not None
-def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not None
-def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
-def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
-
-def send_otp_email(to_email, otp_code):
-    if "your_email" in SENDER_EMAIL: st.error("Setup Error: Sender Email not configured."); return False
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = SENDER_EMAIL; msg['To'] = to_email; msg['Subject'] = f"{otp_code} is your HisaabKeeper Verification Code"
-        body = f"Hello,\n\nOTP: {otp_code}\n\nRegards,\nHisaabKeeper"
-        msg.attach(MIMEText(body, 'plain'))
-        server = smtplib.SMTP('smtp.gmail.com', 587); server.starttls()
-        server.login(SENDER_EMAIL, SENDER_PASSWORD); server.sendmail(SENDER_EMAIL, to_email, msg.as_string())
-        server.quit(); return True
-    except Exception as e: st.error(f"Failed to send email: {e}"); return False
-
-def to_excel_bytes(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
-    return output.getvalue()
 
 # --- SESSION STATE INITIALIZATION ---
 if "user_id" not in st.session_state: st.session_state.user_id = None
@@ -915,8 +932,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                     # Ensure path directory function exists or create dummy
                     # Integrating the user's PDF generation function requires a valid path.
                     # Since we are using buffer for download, we pass buffer as path to generate_pdf.
-                    # Note: The provided 'generate_pdf' function writes to a file path string. 
-                    # To adapt it without changing it, we use a BytesIO buffer which canvas accepts.
                     
                     pdf_buffer = io.BytesIO()
                     
@@ -930,14 +945,24 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                         'is_intra': not is_inter_state 
                     }
                     
-                    # We call the NEW generate_pdf function provided by user. 
-                    # Note: user's generate_pdf does NOT return the buffer, it saves to file. 
-                    # We must modify the call to pass the buffer as 'path' so it writes to memory.
-                    generate_pdf(profile, df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict(), 
-                                 valid_items.to_dict('records'), inv_no, inv_date_str, 
-                                 totals_for_pdf, is_letterhead=False, path=pdf_buffer) # Passing buffer as path
+                    # Inject Theme
+                    profile['Template'] = profile.get('Template', 'Simple')
                     
-                    pdf_buffer.seek(0) # Reset buffer pointer
+                    # Prepare Buyer Dict with Date & POS
+                    buyer_data_for_pdf = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
+                    buyer_data_for_pdf['Date'] = inv_date_str
+                    # Simple POS Logic for PDF display
+                    if is_inter_state:
+                         buyer_data_for_pdf['POS Code'] = "Inter" 
+                    else:
+                         buyer_data_for_pdf['POS Code'] = "24" # Default/Placeholder if logic complex
+
+                    # Call Generator
+                    generate_pdf(profile, buyer_data_for_pdf, 
+                                 valid_items.to_dict('records'), inv_no, pdf_buffer, 
+                                 totals_for_pdf, is_letterhead=False) 
+                    
+                    pdf_buffer.seek(0)
                     
                     st.session_state.last_generated_invoice = {
                         "no": inv_no, 
@@ -959,7 +984,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
             ac1, ac2, ac3 = st.columns(3)
             ac1.download_button("⬇️ Download PDF", last_inv["pdf_bytes"], f"Invoice_{last_inv['no']}.pdf", "application/pdf", use_container_width=True)
             
-            # SAFE KEY ACCESS FIX
             wa_link = last_inv.get("wa_link")
             if wa_link: ac2.link_button("📱 WhatsApp Web", wa_link, use_container_width=True)
             else: ac2.button("📱 WhatsApp", disabled=True, use_container_width=True, help="No Mobile Number")
