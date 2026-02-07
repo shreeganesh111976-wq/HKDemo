@@ -41,6 +41,37 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
+    /* SUMMARY BOX STYLING - ROBOTO FONT */
+    .bill-summary-box { 
+        background-color: #f9f9f9; 
+        padding: 20px; 
+        border-radius: 8px; 
+        border: 1px solid #e0e0e0; 
+        margin-top: 20px;
+        font-family: 'Roboto', sans-serif; 
+    }
+    
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 16px;
+        color: #333;
+        font-family: 'Roboto', sans-serif;
+    }
+    
+    .total-row { 
+        display: flex;
+        justify-content: space-between;
+        font-size: 20px; 
+        font-weight: bold; 
+        border-top: 1px solid #ccc; 
+        margin-top: 10px; 
+        padding-top: 10px; 
+        color: #000;
+        font-family: 'Roboto', sans-serif;
+    }
+    
     /* Button Width Fix */
     .stButton button { width: 100%; }
     
@@ -72,7 +103,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPER FUNCTIONS ---
+# --- HELPER: INDIAN CURRENCY FORMATTER ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -185,15 +216,11 @@ def update_user_profile(updated_profile_dict):
         except Exception as e: st.error(f"Error: {e}"); return False
     return False
 
-# --- PDF GENERATION LOGIC ---
+# --- PDF GENERATION LOGIC (FROM YOUR TEMPLATE CODE) ---
 def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
-    # This function draws the top section and returns the Y-coordinate where the table should start
-    
-    # --- HEADER SECTION ---
     if not is_letterhead:
         if theme == 'Formal':
-            c.setLineWidth(3); c.rect(20, h-160, w-40, 140) 
-            c.setLineWidth(1)
+            c.setLineWidth(3); c.rect(20, h-160, w-40, 140); c.setLineWidth(1)
 
         if os.path.exists(LOGO_FILE):
             try:
@@ -221,7 +248,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
                 c.drawCentredString(center_x, y_contact, f"PAN: {seller.get('PAN', '')}")
                 y_contact -= 12
         
-        # --- ADDRESS FIX: Line 1, Line 2, District State Pincode ---
+        # --- ADDRESS FORMAT FIX ---
         c.drawCentredString(center_x, y_contact, seller.get('Addr1', ''))
         y_contact -= 12
         c.drawCentredString(center_x, y_contact, seller.get('Addr2', ''))
@@ -240,13 +267,10 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     if theme != 'Modern' and not is_letterhead:
         c.line(30, h-165, w-30, h-165)
     
-    # --- BILL TO SECTION ---
+    # --- BILL TO ---
     y = h-190
-    
-    # Check for Ship To
     ship_data = buyer.get('Shipping', {})
     
-    # Draw "Bill To"
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
     c.drawString(40, y-15, buyer.get('Name', ''))
@@ -265,11 +289,10 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
         addr_start_y -= 12
         c.drawString(40, addr_start_y, f"{buyer.get('Address 3', '')}")
     
-    # Added Mobile/Email Line as requested to fill space
     addr_start_y -= 12
     c.drawString(40, addr_start_y, f"M: {buyer.get('Mobile', '')}  E: {buyer.get('Email', '')}")
 
-    # Draw "Ship To" if exists
+    # --- SHIP TO ---
     if ship_data:
         x_ship = 250
         c.setFont(font_header, 10); c.drawString(x_ship, y, "Ship To:")
@@ -290,7 +313,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
             s_addr_y -= 12
             c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr3', '')}")
 
-    # Invoice Details
+    # --- INVOICE DETAILS ---
     x_inv = 400
     c.setFont(font_header, 10); c.drawString(x_inv, y, "Invoice Details:")
     c.setFont(font_body, 10)
@@ -300,7 +323,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
         pos_code = buyer.get('POS Code', '24')
         c.drawString(x_inv, y-45, f"POS: {pos_code}-{STATE_CODES.get(pos_code, '')}")
 
-    return h - 300 # Adjusted Y for Table Start
+    return h - 300 
 
 def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
     foot_y = 130 
@@ -310,8 +333,8 @@ def draw_footer_on_canvas(c, w, h, seller, font_header, font_body):
     c.setFont(font_body, 9)
     c.drawString(40, foot_y+60, f"Bank: {seller.get('Bank Name','')}")
     
-    # --- BRANCH NAME ADDED ---
-    c.drawString(40, foot_y+48, f"Branch: {seller.get('Branch', '')}") 
+    # --- BRANCH ADDED ---
+    c.drawString(40, foot_y+48, f"Branch: {seller.get('Branch','')}")
     c.drawString(40, foot_y+36, f"A/c: {seller.get('Account No','')}")
     c.drawString(40, foot_y+24, f"IFSC: {seller.get('IFSC','')}")
     
@@ -341,9 +364,8 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     c = canvas.Canvas(path, pagesize=A4)
     w, h = A4 
     
-    # Use 'Template' key to match Company Profile
-    theme = seller.get('Template', 'Basic') # Mapped 'Simple' -> 'Basic' logic below
-    if theme == "Simple": theme = "Basic" # Normalize
+    theme = seller.get('Template', 'Simple')
+    if theme == "Simple": theme = "Basic"
     
     if theme == 'Modern': 
         font_header = "Helvetica-Bold"; font_body = "Helvetica"
@@ -351,11 +373,11 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     elif theme == 'Formal':
         font_header = "Times-Bold"; font_body = "Times-Roman"
         accent_color = colors.white; text_color_head = colors.black; grid_color = colors.black
-    else: # Basic
+    else: 
         font_header = "Helvetica-Bold"; font_body = "Helvetica"
         accent_color = colors.grey; text_color_head = colors.whitesmoke; grid_color = colors.black
 
-    # --- 1. PREPARE MAIN TABLE DATA ---
+    # --- MAIN TABLE ---
     is_gst_bill = seller.get('Is GST', 'No') == 'Yes'
     if is_gst_bill:
         header = ["Sr.\nNo.", "Description", "HSN/SAC", "Qty", "UOM", "Rate", "Amount"]
@@ -370,7 +392,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     for i, item in enumerate(items, 1):
         amt = item['Qty'] * item['Rate']
         desc = str(item['Description']).replace('\n', ' ') 
-        
         if is_gst_bill:
             data.append([str(i), desc, str(item.get('HSN', '')), f"{item['Qty']:.2f}", str(item.get('UOM', '')), f"{item['Rate']:.2f}", f"{amt:.2f}"])
         else:
@@ -415,7 +436,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     main_table = Table(data, colWidths=col_widths)
     main_table.setStyle(TableStyle(style_cmds))
 
-    # --- 2. PREPARE HSN TABLE DATA (IF GST) ---
+    # --- HSN TABLE ---
     hsn_table = None
     if is_gst_bill:
         tax_summary = {}
@@ -447,7 +468,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
             ('FONTNAME', (0,0), (-1,0), font_header), ('FONTNAME', (0, -1), (-1, -1), font_header)
         ]))
 
-    # --- 3. DRAW PAGES ---
+    # --- DRAWING ---
     header_bottom_y = h - 300 
     footer_height = 230 
     usable_height = header_bottom_y - footer_height
@@ -965,12 +986,13 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 c1, c2 = st.columns(2)
                 bn = c1.text_input("Business Name", value=profile.get("Business Name", ""))
                 tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
-                c3, c4 = st.columns(2)
+                c3, c4, c5 = st.columns(3)
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
-                template = c4.selectbox("PDF Template", ["Simple", "Modern", "Formal"], index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
-                c5, c6 = st.columns(2)
-                mob = c5.text_input("Business Mobile", value=profile.get("Mobile", ""))
-                em = c6.text_input("Business Email", value=profile.get("Email", ""))
+                signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
+                template = c5.selectbox("PDF Template", ["Simple", "Modern", "Formal"], index=["Simple", "Modern", "Formal"].index(profile.get("Template", "Simple")))
+                c6, c7 = st.columns(2)
+                mob = c6.text_input("Business Mobile", value=profile.get("Mobile", ""))
+                em = c7.text_input("Business Email", value=profile.get("Email", ""))
                 tax_id_val = ""
                 if gst_selection == "Yes":
                     tax_id_val = st.text_input("GSTIN (e.g. 24ABCDE1234F1Z5)", value=profile.get("GSTIN", ""))
@@ -991,7 +1013,11 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
                 bc3, bc4 = st.columns(2)
-                acc_no = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
+                acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
+                # Auto-remove .0
+                if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
+                acc_no = acc_no_raw
+
                 ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
                 upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
             if st.form_submit_button("💾 Update Company Profile"):
@@ -1003,11 +1029,23 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 else:
                     if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F")
                     final_pan = clean_tax_val
-                if acc_no and not acc_no.isdigit(): errors.append("Account Number must contain only digits.")
+                
+                # Validation
+                if acc_no and not str(acc_no).isdigit(): errors.append("Account Number must contain only digits.")
                 if upi and "@" not in upi: errors.append("Invalid UPI ID (must contain '@').")
+                
                 if errors:
                     for e in errors: st.error(e)
                 else:
+                    # SAVE FILES
+                    if logo is not None:
+                        with open(LOGO_FILE, "wb") as f:
+                            f.write(logo.getbuffer())
+                    
+                    if signature is not None:
+                        with open(SIGNATURE_FILE, "wb") as f:
+                            f.write(signature.getbuffer())
+
                     updated_data = {
                         "Business Name": bn, "Tagline": tag, "Mobile": mob, "Email": em, "Template": template,
                         "Is GST": gst_selection, "GSTIN": final_gstin, "PAN": final_pan,
