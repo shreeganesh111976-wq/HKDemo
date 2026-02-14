@@ -23,6 +23,12 @@ from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
 from PIL import Image
 
+# --- BARCODE DECODER IMPORT ---
+try:
+    from pyzbar.pyzbar import decode
+except ImportError:
+    decode = None
+
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
 
@@ -320,7 +326,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
-    c.drawString(40, y-15, buyer.get('Name', ''))
+    c.drawString(40, y-15, str(buyer.get('Name', '')))
     
     if seller.get('Is GST', 'No') == 'Yes':
         c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
@@ -457,7 +463,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -554,7 +560,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
-    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -579,6 +584,7 @@ if "im_uom" not in st.session_state: st.session_state.im_uom = "PCS"
 if "im_hsn" not in st.session_state: st.session_state.im_hsn = ""
 if "im_barcode" not in st.session_state: st.session_state.im_barcode = ""
 if "im_weight" not in st.session_state: st.session_state.im_weight = ""
+if "ret_scanned_val" not in st.session_state: st.session_state.ret_scanned_val = ""
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -857,11 +863,28 @@ def main_app():
                 st.session_state.bm_invoice_no = inv_no
 
              st.divider()
-
-             scan_code = st.text_input("📷 Scan Barcode / Enter Code", key="retail_scanner")
              
-             if scan_code:
-                 found_item = df_items[df_items['Barcode'] == scan_code]
+             # SCANNER
+             c_scan, c_cam = st.columns([3, 1], vertical_alignment="bottom")
+             with c_cam:
+                 use_cam = st.toggle("📷")
+             
+             with c_scan:
+                 scan_code_input = st.text_input("Scan/Enter Barcode", value=st.session_state.ret_scanned_val, key="retail_scanner_main")
+
+             if use_cam:
+                 img_file = st.camera_input("Scan")
+                 if img_file and decode:
+                     image = Image.open(img_file)
+                     decoded_objects = decode(image)
+                     if decoded_objects:
+                         detected_code = decoded_objects[0].data.decode("utf-8")
+                         st.session_state.ret_scanned_val = detected_code
+                         st.rerun()
+
+             # PROCESS SCAN
+             if scan_code_input:
+                 found_item = df_items[df_items['Barcode'] == scan_code_input]
                  
                  if not found_item.empty:
                      item_data = found_item.iloc[0]
@@ -876,9 +899,11 @@ def main_app():
                             "Rate": float(item_data['Price']),
                             "GST Rate": 0.0
                         })
+                         st.session_state.ret_scanned_val = "" # Reset
                          st.toast("Item Added!")
+                         time.sleep(0.5); st.rerun()
                  else:
-                     st.warning(f"New Barcode: {scan_code}")
+                     st.warning(f"New Barcode: {scan_code_input}")
                      with st.expander("Add New Product Details", expanded=True):
                          new_name = st.text_input("Product Name")
                          c1, c2, c3 = st.columns(3)
@@ -890,12 +915,13 @@ def main_app():
                              if new_name:
                                  save_row_to_sheet("Items", {
                                      "Item Name": new_name, "Price": new_price, "UOM": "PCS", 
-                                     "HSN": new_hsn, "Image": "", "Barcode": scan_code, "Weight": new_weight
+                                     "HSN": new_hsn, "Image": "", "Barcode": scan_code_input, "Weight": new_weight
                                  })
                                  st.session_state.pos_cart.append({
                                     "Description": new_name, "HSN": new_hsn, "Qty": 1.0, "UOM": "PCS",
                                     "Rate": float(new_price), "GST Rate": 0.0
                                 })
+                                 st.session_state.ret_scanned_val = "" # Reset
                                  st.success("Product Saved & Added!")
                                  time.sleep(1); st.rerun()
 
@@ -927,7 +953,6 @@ def main_app():
                                             st.session_state.pos_cart[idx]['Qty'] -= 1
                                         else:
                                             st.session_state.pos_cart.pop(idx)
-                                        
                                         if idx < len(st.session_state.pos_cart):
                                              st.session_state[f"ret_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
