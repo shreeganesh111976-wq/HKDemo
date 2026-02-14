@@ -21,7 +21,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
-from PIL import Image # Added for image compression
+from PIL import Image
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
@@ -83,9 +83,6 @@ st.markdown("""
         background-color: white;
         transition: 0.3s;
         height: 100%;
-    }
-    .product-card:hover {
-        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
     .product-price {
         color: #FF4B4B;
@@ -154,19 +151,17 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
-# --- IMAGE HELPERS (FIXED FOR COMPRESSION) ---
+# --- IMAGE HELPERS ---
 def image_to_base64(image_file):
     if image_file is None: return None
     try:
-        # Resize and Compress Image to fit in Google Sheets Cell limit
         img = Image.open(image_file)
-        img.thumbnail((150, 150)) # Resize to max 150x150
+        img.thumbnail((150, 150))
         buff = io.BytesIO()
-        img = img.convert('RGB') # Convert to RGB to save as JPEG
-        img.save(buff, format="JPEG", quality=70) # Compress quality
+        img = img.convert('RGB')
+        img.save(buff, format="JPEG", quality=70)
         return base64.b64encode(buff.getvalue()).decode()
-    except Exception as e:
-        return None
+    except: return None
 
 def base64_to_image(base64_string):
     if not base64_string or str(base64_string) == 'nan': return None
@@ -196,7 +191,6 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -227,28 +221,20 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
     df = fetch_data(worksheet_name)
     if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
-    
     if df.empty: updated_df = new_df
     else: updated_df = pd.concat([df, new_df], ignore_index=True)
-    
     try:
-        # Try normal update
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
     except Exception as e:
-        # If failure, check if it's because sheet is missing/invalid, then try create
         if "sheet" in str(e).lower() or "not found" in str(e).lower():
             try:
                 conn.create(worksheet=worksheet_name, data=updated_df)
                 st.cache_data.clear()
                 return True
-            except Exception as create_err:
-                st.error(f"Error creating table: {create_err}")
-                return False
-        else:
-            st.error(f"Error saving data: {e}")
-            return False
+            except: return False
+        return False
 
 def save_bulk_data(worksheet_name, new_df_chunk):
     conn = get_db_connection()
@@ -260,7 +246,12 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except Exception as e: st.error(f"Error: {e}"); return False
+    except Exception as e:
+        try:
+            conn.create(worksheet=worksheet_name, data=updated_df)
+            st.cache_data.clear()
+            return True
+        except: return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
@@ -272,10 +263,10 @@ def update_user_profile(updated_profile_dict):
             conn.update(worksheet="Users", data=df)
             st.session_state.user_profile = df.iloc[idx[0]].to_dict()
             return True
-        except Exception as e: st.error(f"Error: {e}"); return False
+        except: return False
     return False
 
-# --- PDF GENERATION LOGIC ---
+# --- PDF GENERATOR ---
 def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
     if not is_letterhead:
         if theme == 'Formal':
@@ -324,7 +315,6 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     if theme != 'Modern' and not is_letterhead:
         c.line(30, h-165, w-30, h-165)
     
-    # --- BILL TO ---
     y = h-190
     ship_data = buyer.get('Shipping', {})
     
@@ -349,7 +339,6 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     addr_start_y -= 12
     c.drawString(40, addr_start_y, f"M: {buyer.get('Mobile', '')}  E: {buyer.get('Email', '')}")
 
-    # --- SHIP TO ---
     if ship_data:
         x_ship = 250
         c.setFont(font_header, 10); c.drawString(x_ship, y, "Ship To:")
@@ -370,7 +359,6 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
             s_addr_y -= 12
             c.drawString(x_ship, s_addr_y, f"{ship_data.get('Addr3', '')}")
 
-    # --- INVOICE DETAILS ---
     x_inv = 400
     c.setFont(font_header, 10); c.drawString(x_inv, y, "Invoice Details:")
     c.setFont(font_body, 10)
@@ -432,7 +420,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
         font_header = "Helvetica-Bold"; font_body = "Helvetica"
         accent_color = colors.grey; text_color_head = colors.whitesmoke; grid_color = colors.black
 
-    # --- MAIN TABLE ---
     is_gst_bill = seller.get('Is GST', 'No') == 'Yes'
     if is_gst_bill:
         header = ["Sr.\nNo.", "Description", "HSN/SAC", "Qty", "UOM", "Rate", "Amount"]
@@ -491,7 +478,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     main_table = Table(data, colWidths=col_widths)
     main_table.setStyle(TableStyle(style_cmds))
 
-    # --- HSN TABLE ---
     hsn_table = None
     if is_gst_bill:
         tax_summary = {}
@@ -523,7 +509,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
             ('FONTNAME', (0,0), (-1,0), font_header), ('FONTNAME', (0, -1), (-1, -1), font_header)
         ]))
 
-    # --- DRAWING ---
     header_bottom_y = h - 300 
     footer_height = 230 
     usable_height = header_bottom_y - footer_height
@@ -581,11 +566,19 @@ if "otp_generated" not in st.session_state: st.session_state.otp_generated = Non
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
 if "last_generated_invoice" not in st.session_state: st.session_state.last_generated_invoice = None
+
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
 if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 if "pos_cart" not in st.session_state: st.session_state.pos_cart = []
+
+# --- ITEM MASTER KEYS ---
+if "im_name" not in st.session_state: st.session_state.im_name = ""
+if "im_price" not in st.session_state: st.session_state.im_price = 0.0
+if "im_uom" not in st.session_state: st.session_state.im_uom = "PCS"
+if "im_hsn" not in st.session_state: st.session_state.im_hsn = ""
+if "im_img" not in st.session_state: st.session_state.im_img = None
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -674,17 +667,10 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
-    # --- NAVIGATION LOGIC ---
     menu_options = ["Dashboard", "Customer Master", "Item Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
-    
-    if st.session_state.menu_selection not in menu_options:
-        st.session_state.menu_selection = "Dashboard"
-        
+    if st.session_state.menu_selection not in menu_options: st.session_state.menu_selection = "Dashboard"
     choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
-    
-    if choice != st.session_state.menu_selection:
-        st.session_state.menu_selection = choice
-        st.rerun()
+    if choice != st.session_state.menu_selection: st.session_state.menu_selection = choice; st.rerun()
 
     if choice == "Dashboard":
         st.header("📊 Dashboard")
@@ -753,16 +739,19 @@ def main_app():
 
     elif choice == "Item Master":
         st.header("📦 Item Master")
+        
+        # --- ADD ITEM SECTION ---
         with st.expander("➕ Add New Item", expanded=True):
             i1, i2 = st.columns([1, 2])
             with i1:
-                item_img = st.file_uploader("Product Image", type=['png', 'jpg', 'jpeg'])
+                # Keyed inputs for clearing state
+                item_img = st.file_uploader("Product Image", type=['png', 'jpg', 'jpeg'], key="im_img_uploader")
             with i2:
-                item_name = st.text_input("Item Name")
+                item_name = st.text_input("Item Name", key="im_name_input")
                 ic1, ic2 = st.columns(2)
-                item_price = ic1.number_input("Fixed Price", min_value=0.0)
-                item_uom = ic2.selectbox("UOM", ["PCS", "KG", "LTR", "BOX", "MTR"])
-                item_hsn = st.text_input("HSN/SAC Code")
+                item_price = ic1.number_input("Fixed Price", min_value=0.0, key="im_price_input")
+                item_uom = ic2.selectbox("UOM", ["PCS", "KG", "LTR", "BOX", "MTR"], key="im_uom_input")
+                item_hsn = st.text_input("HSN/SAC Code", key="im_hsn_input")
                 
             if st.button("Save Item", type="primary"):
                 if not item_name: st.error("Item Name is required")
@@ -772,7 +761,12 @@ def main_app():
                         "Item Name": item_name, "Price": item_price, "UOM": item_uom, 
                         "HSN": item_hsn, "Image": img_str
                     }):
-                        st.success("Item Saved!"); time.sleep(1); st.rerun()
+                        st.success("Item Saved!")
+                        # Clear fields manual hack since no native clear
+                        del st.session_state.im_name_input
+                        del st.session_state.im_price_input
+                        # Rerun to refresh empty fields
+                        time.sleep(1); st.rerun()
         
         st.divider()
         st.subheader("📋 Item List")
@@ -780,15 +774,36 @@ def main_app():
         if not df_items.empty:
             for i, row in df_items.iterrows():
                 with st.container(border=True):
-                    c_img, c_det = st.columns([1, 4])
+                    c_img, c_det, c_act = st.columns([1, 3, 1])
                     with c_img:
                         if row.get("Image"):
-                            try: st.image(base64_to_image(row["Image"]), width=80)
+                            try: st.image(base64_to_image(row["Image"]), width=60)
                             except: st.write("No Img")
                         else: st.write("No Img")
+                    
                     with c_det:
                         st.markdown(f"**{row['Item Name']}**")
                         st.caption(f"Price: ₹{row['Price']} | HSN: {row['HSN']} | UOM: {row['UOM']}")
+                    
+                    with c_act:
+                        # EDIT BUTTON
+                        if st.button("✏️ Edit", key=f"edit_{i}"):
+                            # Load data into top inputs via session state pre-population
+                            # (Requires refactoring inputs to use session state values, effectively moving item to edit area)
+                            st.session_state.im_name_input = row['Item Name']
+                            st.session_state.im_price_input = float(row['Price'])
+                            st.session_state.im_hsn_input = row['HSN']
+                            st.toast("Item details loaded above. Modify and Save to create new version.", icon="✏️")
+                            st.rerun()
+                        
+                        # DELETE BUTTON
+                        if st.button("🗑️ Delete", key=f"del_item_{i}"):
+                            # Remove from dataframe and resave bulk
+                            new_df = df_items.drop(index=i)
+                            if save_bulk_data("Items", new_df):
+                                st.success("Item Deleted!")
+                                time.sleep(0.5)
+                                st.rerun()
 
     elif choice == "Billing Master":
         billing_style = profile.get("BillingStyle", "Default")
@@ -797,12 +812,10 @@ def main_app():
              st.info(f"🚧 You have selected the **{billing_style}** interface. This feature is coming soon! Please switch back to **Default** in Company Profile.")
         
         elif billing_style == "Customized Billing Master":
-            # --- CUSTOMIZED BILLING (POS) ---
             st.markdown(f"<div class='bill-header'>🧾 New Invoice (Customized)</div>", unsafe_allow_html=True)
             df_cust = fetch_user_data("Customers")
             df_items = fetch_user_data("Items")
 
-            # TOP SECTION (Identical to Default)
             c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
             with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -830,13 +843,11 @@ def main_app():
 
             st.divider()
 
-            # POS INTERFACE
             col_menu, col_cart = st.columns([2, 1])
             
             with col_menu:
                 st.subheader("📦 Select Items")
                 if not df_items.empty:
-                    # Grid Layout
                     cols = st.columns(3)
                     for i, row in df_items.iterrows():
                         with cols[i % 3]:
@@ -846,17 +857,40 @@ def main_app():
                                     except: pass
                                 st.markdown(f"**{row['Item Name']}**")
                                 st.markdown(f"<span class='product-price'>₹ {row['Price']}</span>", unsafe_allow_html=True)
-                                if st.button("Add", key=f"add_{i}"):
-                                    # Add to Session Cart
-                                    st.session_state.pos_cart.append({
-                                        "Description": row['Item Name'],
-                                        "HSN": row.get('HSN', ''),
-                                        "Qty": 1.0,
-                                        "UOM": row.get('UOM', 'PCS'),
-                                        "Rate": float(row['Price']),
-                                        "GST Rate": 0.0
-                                    })
-                                    st.rerun()
+                                
+                                # CHECK IF IN CART
+                                cart_item = next((item for item in st.session_state.pos_cart if item['Description'] == row['Item Name']), None)
+                                
+                                if cart_item:
+                                    # SHOW +/- CONTROLS
+                                    b_minus, b_qty, b_plus = st.columns([1, 2, 1])
+                                    if b_minus.button("➖", key=f"minus_{i}"):
+                                        # Find index to update
+                                        idx = st.session_state.pos_cart.index(cart_item)
+                                        if st.session_state.pos_cart[idx]['Qty'] > 1:
+                                            st.session_state.pos_cart[idx]['Qty'] -= 1
+                                        else:
+                                            st.session_state.pos_cart.pop(idx)
+                                        st.rerun()
+                                    
+                                    b_qty.markdown(f"<div style='text-align:center; font-weight:bold; padding-top:5px;'>{int(cart_item['Qty'])}</div>", unsafe_allow_html=True)
+                                    
+                                    if b_plus.button("➕", key=f"plus_{i}"):
+                                        idx = st.session_state.pos_cart.index(cart_item)
+                                        st.session_state.pos_cart[idx]['Qty'] += 1
+                                        st.rerun()
+                                else:
+                                    # SHOW ADD BUTTON
+                                    if st.button("Add", key=f"add_{i}"):
+                                        st.session_state.pos_cart.append({
+                                            "Description": row['Item Name'],
+                                            "HSN": row.get('HSN', ''),
+                                            "Qty": 1.0,
+                                            "UOM": row.get('UOM', 'PCS'),
+                                            "Rate": float(row['Price']),
+                                            "GST Rate": 0.0
+                                        })
+                                        st.rerun()
                 else:
                     st.info("No items found. Go to Item Master to add products.")
 
@@ -866,36 +900,29 @@ def main_app():
                     total_taxable = 0
                     grand_total = 0
                     
-                    # Cart List (Editable)
                     for idx, item in enumerate(st.session_state.pos_cart):
                         with st.container(border=True):
                             c_name, c_del = st.columns([4, 1])
                             c_name.write(f"**{item['Description']}**")
-                            if c_del.button("🗑️", key=f"del_{idx}"):
+                            if c_del.button("🗑️", key=f"del_cart_{idx}"):
                                 st.session_state.pos_cart.pop(idx)
                                 st.rerun()
                             
                             c_qty, c_rate = st.columns(2)
-                            new_qty = c_qty.number_input("Qty", value=float(item['Qty']), min_value=0.1, key=f"qty_{idx}")
-                            new_rate = c_rate.number_input("Rate", value=float(item['Rate']), min_value=0.0, key=f"rate_{idx}")
+                            new_qty = c_qty.number_input("Qty", value=float(item['Qty']), min_value=0.1, key=f"cart_qty_{idx}")
+                            new_rate = c_rate.number_input("Rate", value=float(item['Rate']), min_value=0.0, key=f"cart_rate_{idx}")
                             
-                            # Update Cart
                             st.session_state.pos_cart[idx]['Qty'] = new_qty
                             st.session_state.pos_cart[idx]['Rate'] = new_rate
                             
                             line_amt = new_qty * new_rate
                             total_taxable += line_amt
 
-                    # Payment
                     st.divider()
                     pay_mode = st.radio("Payment Mode", ["Cash", "Online", "Credit"], horizontal=True)
                     
-                    # Totals Logic (Simplified for POS)
                     is_gst_active = profile.get("Is GST") == "Yes"
                     cgst_val = 0; sgst_val = 0; igst_val = 0
-                    
-                    # Simple tax logic for POS (assumes 18% default if active, or based on item master if expanded)
-                    # For this demo, we treat Total Taxable as Grand Total unless tax logic expanded
                     grand_total = total_taxable 
 
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
@@ -906,24 +933,20 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
-                             # Convert Cart to Standard Item Format for PDF Generator
                              cart_items_df = pd.DataFrame(st.session_state.pos_cart)
-                             
                              items_json = json.dumps(st.session_state.pos_cart)
                              db_row = {
                                 "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
                                 "Items": items_json, "Total Taxable": total_taxable, 
                                 "Grand Total": grand_total, "Payment Mode": pay_mode,
-                                "CGST": 0, "SGST": 0, "IGST": 0 # simplified for POS demo
+                                "CGST": 0, "SGST": 0, "IGST": 0
                             }
                              
                              if save_row_to_sheet("Invoices", db_row):
-                                 # Generate PDF
                                  pdf_buffer = io.BytesIO()
                                  buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
                                  buyer_data['Date'] = inv_date_str
                                  buyer_data['POS Code'] = '24'
-                                 
                                  totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
                                  
                                  generate_pdf(profile, buyer_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
@@ -934,13 +957,11 @@ def main_app():
                                     "wa_link": get_whatsapp_web_link(cust_mob, "Invoice"),
                                     "mail_link": None
                                 }
-                                 st.session_state.pos_cart = [] # Clear Cart
+                                 st.session_state.pos_cart = []
                                  st.rerun()
-
                 else:
                     st.caption("Cart is Empty")
             
-            # Success Actions for POS
             if st.session_state.last_generated_invoice:
                  st.success("Invoice Generated!")
                  l = st.session_state.last_generated_invoice
@@ -949,9 +970,8 @@ def main_app():
                  if l['wa_link']: c2.link_button("WhatsApp", l['wa_link'])
                  c3.button("Email", disabled=True)
 
-
         else:
-            # --- DEFAULT INTERFACE (Existing Code) ---
+            # --- DEFAULT INTERFACE ---
             st.markdown(f"<div class='bill-header'>🧾 New Invoice</div>", unsafe_allow_html=True)
             df_cust = fetch_user_data("Customers")
             
@@ -959,21 +979,19 @@ def main_app():
             
             with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
-                st.write("") # Spacer line 1
+                st.write("")
                 cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
                 def update_cust(): st.session_state.bm_cust_idx = cust_list.index(st.session_state.bm_cust_val) if st.session_state.bm_cust_val in cust_list else 0
                 sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val", label_visibility="collapsed")
             
             with c2:
-                st.write("") # Spacer line 1
-                st.write("") # Spacer line 2 to push button down
+                st.write(""); st.write("")
                 if st.button("➕ New", type="primary", help="Add New Customer"):
-                    st.session_state.menu_selection = "Customer Master"
-                    st.rerun()
+                    st.session_state.menu_selection = "Customer Master"; st.rerun()
 
             with c3:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
-                st.write("") # Spacer line 1
+                st.write("")
                 inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val", label_visibility="collapsed") 
                 inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
             
@@ -997,7 +1015,7 @@ def main_app():
 
             st.write("")
             st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
-            st.write("") # Spacer line 1
+            st.write("")
             
             ic1, ic2 = st.columns([0.4, 0.6]) 
             with ic1:
@@ -1062,7 +1080,6 @@ def main_app():
             if is_inter_state: igst_val = total_tax_val
             else: cgst_val = total_tax_val / 2; sgst_val = total_tax_val / 2
 
-            # --- UI LAYOUT: RIGHT ALIGNED TOTALS (NEW PROFESSIONAL DESIGN) ---
             st.write("")
             c_spacer, c_totals = st.columns([1.5, 1])
             
@@ -1071,7 +1088,6 @@ def main_app():
                 gst_val_numeric = igst_val if is_inter_state else (cgst_val + sgst_val)
                 gst_val_fmt = format_indian_currency(gst_val_numeric)
                 
-                # PROFESSIONAL CARD DESIGN (Dark Sidebar Style)
                 html_content = f"""
                 <div style="background-color: #F0F2F6; padding: 20px; border-radius: 15px; border-left: 5px solid #FF4B4B;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
@@ -1162,7 +1178,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                             st.session_state.reset_invoice_trigger = True 
                             st.rerun()
 
-            # --- SUCCESS ACTIONS ---
             if st.session_state.last_generated_invoice:
                 last_inv = st.session_state.last_generated_invoice
                 st.success(f"✅ Invoice {last_inv['no']} Generated Successfully!")
