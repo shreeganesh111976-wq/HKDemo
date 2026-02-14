@@ -194,6 +194,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -557,7 +558,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
-    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -832,6 +832,34 @@ def main_app():
              st.markdown(f"<div class='bill-header'>🧾 Retail POS</div>", unsafe_allow_html=True)
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
+             
+             # TOP SECTION (Identical to Customized)
+             c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
+             with c1:
+                st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
+                st.write("")
+                cust_list = ["Select"] + df_cust["Name"].tolist() if not df_cust.empty else ["Select"]
+                sel_cust_name = st.selectbox("Select Customer", cust_list, index=st.session_state.bm_cust_idx, key="bm_cust_val_pos_ret", label_visibility="collapsed")
+             with c2:
+                st.write(""); st.write("")
+                if st.button("➕ New", type="primary", help="Add New Customer", key="add_new_pos_ret"):
+                    st.session_state.menu_selection = "Customer Master"; st.rerun()
+             with c3:
+                st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>📅 Invoice Date</p>", unsafe_allow_html=True)
+                st.write("")
+                inv_date_obj = st.date_input("Invoice Date", value=st.session_state.bm_date, format="DD/MM/YYYY", key="bm_date_val_pos_ret", label_visibility="collapsed") 
+                inv_date_str = inv_date_obj.strftime("%d/%m/%Y")
+            
+             st.write("")
+             ic1, ic2 = st.columns([0.4, 0.6]) 
+             with ic1:
+                st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>🧾 Invoice Number</p>", unsafe_allow_html=True)
+                st.write("")
+                val_inv = st.session_state.bm_invoice_no if "bm_invoice_no" in st.session_state else ""
+                inv_no = st.text_input("Invoice Number", value=val_inv, label_visibility="collapsed", placeholder="Enter Inv No", key="bm_inv_val_pos_ret")
+                st.session_state.bm_invoice_no = inv_no
+
+             st.divider()
 
              scan_code = st.text_input("📷 Scan Barcode / Enter Code", key="retail_scanner")
              
@@ -876,8 +904,60 @@ def main_app():
 
              st.divider()
              
-             col_cart_l, col_cart_r = st.columns([2, 1])
-             with col_cart_r:
+             col_menu, col_cart = st.columns([2, 1])
+             
+             # RETAILER GRID (SAME AS CUSTOMIZED)
+             with col_menu:
+                st.subheader("📦 Select Items")
+                if not df_items.empty:
+                    cols = st.columns(3)
+                    for i, row in df_items.iterrows():
+                        with cols[i % 3]:
+                            with st.container(border=True):
+                                if row.get("Image"):
+                                    try: st.image(base64_to_image(row["Image"]), use_container_width=True)
+                                    except: pass
+                                st.markdown(f"**{row['Item Name']}**")
+                                st.markdown(f"<span class='product-price'>₹ {row['Price']}</span>", unsafe_allow_html=True)
+                                
+                                cart_item = next((item for item in st.session_state.pos_cart if item['Description'] == row['Item Name']), None)
+                                
+                                if cart_item:
+                                    b_minus, b_qty, b_plus = st.columns([1, 1, 1], vertical_alignment="center")
+                                    if b_minus.button("➖", key=f"ret_minus_{i}", use_container_width=True):
+                                        idx = st.session_state.pos_cart.index(cart_item)
+                                        if st.session_state.pos_cart[idx]['Qty'] > 1:
+                                            st.session_state.pos_cart[idx]['Qty'] -= 1
+                                        else:
+                                            st.session_state.pos_cart.pop(idx)
+                                        
+                                        if idx < len(st.session_state.pos_cart):
+                                             st.session_state[f"ret_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
+                                        st.rerun()
+                                    
+                                    b_qty.markdown(f"<div style='text-align:center; font-weight:bold;'>{int(cart_item['Qty'])}</div>", unsafe_allow_html=True)
+                                    
+                                    if b_plus.button("➕", key=f"ret_plus_{i}", use_container_width=True):
+                                        idx = st.session_state.pos_cart.index(cart_item)
+                                        st.session_state.pos_cart[idx]['Qty'] += 1
+                                        st.session_state[f"ret_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
+                                        st.rerun()
+                                else:
+                                    if st.button("Add", key=f"ret_add_{i}", use_container_width=True):
+                                        st.session_state.pos_cart.append({
+                                            "Description": row['Item Name'],
+                                            "HSN": row.get('HSN', ''),
+                                            "Qty": 1.0,
+                                            "UOM": row.get('UOM', 'PCS'),
+                                            "Rate": float(row['Price']),
+                                            "GST Rate": 0.0
+                                        })
+                                        st.rerun()
+                else:
+                    st.info("No items found.")
+
+             # RETAILER CART (SAME AS CUSTOMIZED)
+             with col_cart:
                  st.subheader("Checkout")
                  
                  if st.session_state.pos_cart:
@@ -888,7 +968,7 @@ def main_app():
                         with st.container(border=True):
                             c_name, c_del = st.columns([4, 1])
                             c_name.write(f"**{item['Description']}**")
-                            if c_del.button("🗑️", key=f"ret_del_{idx}"):
+                            if c_del.button("🗑️", key=f"ret_del_cart_{idx}"):
                                 st.session_state.pos_cart.pop(idx); st.rerun()
                             
                             c_qty, c_rate = st.columns(2)
@@ -906,41 +986,59 @@ def main_app():
                     
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
                     
-                    inv_no = st.text_input("Inv No", key="ret_inv_no")
-                    sel_cust_name = st.selectbox("Customer", ["Select"] + df_cust["Name"].tolist(), key="ret_cust")
-                    pay_mode = st.radio("Mode", ["Cash", "UPI"], horizontal=True, key="ret_pay")
+                    pay_mode = st.radio("Payment Mode", ["Cash", "Online", "Credit"], horizontal=True, key="ret_pay")
 
-                    if st.button("Generate Bill", type="primary"):
-                        if not inv_no: st.error("Inv No Req")
+                    if st.button("✅ Generate Bill", type="primary", use_container_width=True):
+                        if not sel_cust_name or sel_cust_name == "Select":
+                             st.error("Select Customer!")
+                        elif not inv_no:
+                             st.error("Enter Invoice No!")
                         else:
-                             # ... Same generation logic as Customized ...
+                             cust_mob = ""
+                             if sel_cust_name != "Select" and not df_cust.empty:
+                                 cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
+                                 cust_mob = str(cust_row_data.get("Mobile", ""))
+                             
                              items_json = json.dumps(st.session_state.pos_cart)
                              grand_total = total_taxable
                              db_row = {
-                                "Bill No": inv_no, "Date": str(date.today().strftime("%d/%m/%Y")), "Buyer Name": sel_cust_name, 
+                                "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
                                 "Items": items_json, "Total Taxable": total_taxable, 
                                 "Grand Total": grand_total, "Payment Mode": pay_mode,
                                 "CGST": 0, "SGST": 0, "IGST": 0
                             }
+                             
                              if save_row_to_sheet("Invoices", db_row):
+                                 firm_name = profile.get('Business Name', 'Our Firm')
+                                 msg_body = f"""Hi {sel_cust_name}, Invoice {inv_no} from {firm_name} generated."""
+                                 
                                  pdf_buffer = io.BytesIO()
-                                 cust_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict() if sel_cust_name != "Select" else {"Name": "Cash Customer", "Address 1": "", "Mobile": ""}
-                                 cust_data['Date'] = str(date.today().strftime("%d/%m/%Y"))
+                                 buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
+                                 buyer_data['Date'] = inv_date_str
+                                 buyer_data['POS Code'] = '24'
+                                 buyer_data['Shipping'] = {}
                                  
                                  totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
                                  
-                                 generate_pdf(profile, cust_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
+                                 generate_pdf(profile, buyer_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
+                                 pdf_buffer.seek(0)
                                  
                                  st.session_state.last_generated_invoice = {
                                     "no": inv_no, "pdf_bytes": pdf_buffer,
-                                    "wa_link": None, "mail_link": None
+                                    "wa_link": get_whatsapp_web_link(cust_mob, msg_body), 
+                                    "mail_link": None
                                 }
                                  st.session_state.pos_cart = []
                                  st.rerun()
+                else:
+                    st.caption("Cart is Empty")
 
              if st.session_state.last_generated_invoice:
                  l = st.session_state.last_generated_invoice
-                 st.download_button("Download PDF", l['pdf_bytes'], "inv.pdf")
+                 c1, c2, c3 = st.columns(3)
+                 c1.download_button("Download PDF", l['pdf_bytes'], "inv.pdf")
+                 if l['wa_link']: c2.link_button("WhatsApp", l['wa_link'])
+                 c3.button("Email", disabled=True)
         
         elif billing_style == "Customized Billing Master":
             st.markdown(f"<div class='bill-header'>🧾 New Invoice (Customized)</div>", unsafe_allow_html=True)
@@ -1000,7 +1098,6 @@ def main_app():
                                         else:
                                             st.session_state.pos_cart.pop(idx)
                                         
-                                        # Force Update Checkout Input
                                         if idx < len(st.session_state.pos_cart):
                                              st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
@@ -1042,7 +1139,6 @@ def main_app():
                             
                             c_qty, c_rate = st.columns(2)
                             
-                            # FORCE KEY-VALUE SYNC FOR QTY
                             if f"cart_qty_{idx}" not in st.session_state:
                                 st.session_state[f"cart_qty_{idx}"] = float(item['Qty'])
                                 
@@ -1069,7 +1165,6 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
-                             # FIX: Fetch Customer Data First
                              cust_mob = ""
                              if sel_cust_name != "Select" and not df_cust.empty:
                                  cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
@@ -1387,6 +1482,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
                 signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
                 
+                # Retrieve current values properly to set index
                 current_style = profile.get("BillingStyle", "Default")
                 style_options = ["Default", "Retailers", "Customized Billing Master"]
                 try: style_idx = style_options.index(current_style)
@@ -1425,6 +1521,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
                 bc3, bc4 = st.columns(2)
                 acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
+                # Auto-remove .0
                 if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
                 acc_no = acc_no_raw
 
@@ -1446,6 +1543,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 if errors:
                     for e in errors: st.error(e)
                 else:
+                    # SAVE FILES
                     if logo is not None:
                         with open(LOGO_FILE, "wb") as f:
                             f.write(logo.getbuffer())
