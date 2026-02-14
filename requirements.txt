@@ -7,6 +7,4 @@ st-gsheets-connection
 qrcode[pil]
 xlsxwriter
 pillow
-zxing-cpp
-numpy
-opencv-python-headless
+streamlit-qrcode-scanner
