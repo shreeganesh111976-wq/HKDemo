@@ -29,8 +29,8 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    /* Global Font Settings */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
@@ -43,7 +43,7 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
-    /* SUMMARY BOX STYLING - ROBOTO FONT */
+    /* SUMMARY BOX STYLING */
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
@@ -74,7 +74,7 @@ st.markdown("""
         font-family: 'Roboto', sans-serif;
     }
     
-    /* Product Card Styling for POS */
+    /* POS Product Card */
     .product-card {
         border: 1px solid #ddd;
         border-radius: 10px;
@@ -107,7 +107,7 @@ APP_NAME = "HisaabKeeper"
 LOGO_FILE = "logo.png" 
 SIGNATURE_FILE = "signature.png"
 
-# --- FULL STATE CODES (GST MAPPING) ---
+# --- STATE CODES ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -121,7 +121,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPER FUNCTIONS ---
+# --- HELPERS ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -136,9 +136,6 @@ def format_indian_currency(amount):
     else: formatted_integer = integer_part
     return f"₹ {formatted_integer}.{parts[1]}"
 
-def get_save_directory(profile_data, is_letterhead=False):
-    return "invoices_letterhead" if is_letterhead else "invoices_main"
-
 def get_whatsapp_web_link(mobile, msg):
     if not mobile: return None
     clean = re.sub(r'\D', '', str(mobile))
@@ -151,7 +148,6 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
-# --- IMAGE HELPERS ---
 def image_to_base64(image_file):
     if image_file is None: return None
     try:
@@ -246,7 +242,7 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except Exception as e:
+    except:
         try:
             conn.create(worksheet=worksheet_name, data=updated_df)
             st.cache_data.clear()
@@ -450,14 +446,13 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     
     data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
     
-    last_col_idx = len(header) - 1
     style_cmds = [
         ('FONTNAME', (0,0), (-1,-1), font_body),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -554,7 +549,6 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
-    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -573,12 +567,10 @@ if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoi
 if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 if "pos_cart" not in st.session_state: st.session_state.pos_cart = []
 
-# --- ITEM MASTER KEYS ---
 if "im_name" not in st.session_state: st.session_state.im_name = ""
 if "im_price" not in st.session_state: st.session_state.im_price = 0.0
 if "im_uom" not in st.session_state: st.session_state.im_uom = "PCS"
 if "im_hsn" not in st.session_state: st.session_state.im_hsn = ""
-if "im_img" not in st.session_state: st.session_state.im_img = None
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -744,7 +736,6 @@ def main_app():
         with st.expander("➕ Add New Item", expanded=True):
             i1, i2 = st.columns([1, 2])
             with i1:
-                # Keyed inputs for clearing state
                 item_img = st.file_uploader("Product Image", type=['png', 'jpg', 'jpeg'], key="im_img_uploader")
             with i2:
                 item_name = st.text_input("Item Name", key="im_name_input")
@@ -762,10 +753,8 @@ def main_app():
                         "HSN": item_hsn, "Image": img_str
                     }):
                         st.success("Item Saved!")
-                        # Clear fields manual hack since no native clear
                         del st.session_state.im_name_input
                         del st.session_state.im_price_input
-                        # Rerun to refresh empty fields
                         time.sleep(1); st.rerun()
         
         st.divider()
@@ -780,30 +769,21 @@ def main_app():
                             try: st.image(base64_to_image(row["Image"]), width=60)
                             except: st.write("No Img")
                         else: st.write("No Img")
-                    
                     with c_det:
                         st.markdown(f"**{row['Item Name']}**")
                         st.caption(f"Price: ₹{row['Price']} | HSN: {row['HSN']} | UOM: {row['UOM']}")
-                    
                     with c_act:
-                        # EDIT BUTTON
                         if st.button("✏️ Edit", key=f"edit_{i}"):
-                            # Load data into top inputs via session state pre-population
-                            # (Requires refactoring inputs to use session state values, effectively moving item to edit area)
                             st.session_state.im_name_input = row['Item Name']
                             st.session_state.im_price_input = float(row['Price'])
                             st.session_state.im_hsn_input = row['HSN']
-                            st.toast("Item details loaded above. Modify and Save to create new version.", icon="✏️")
+                            st.toast("Item details loaded above. Modify and Save.", icon="✏️")
                             st.rerun()
-                        
-                        # DELETE BUTTON
                         if st.button("🗑️ Delete", key=f"del_item_{i}"):
-                            # Remove from dataframe and resave bulk
                             new_df = df_items.drop(index=i)
                             if save_bulk_data("Items", new_df):
                                 st.success("Item Deleted!")
-                                time.sleep(0.5)
-                                st.rerun()
+                                time.sleep(0.5); st.rerun()
 
     elif choice == "Billing Master":
         billing_style = profile.get("BillingStyle", "Default")
@@ -858,14 +838,11 @@ def main_app():
                                 st.markdown(f"**{row['Item Name']}**")
                                 st.markdown(f"<span class='product-price'>₹ {row['Price']}</span>", unsafe_allow_html=True)
                                 
-                                # CHECK IF IN CART
                                 cart_item = next((item for item in st.session_state.pos_cart if item['Description'] == row['Item Name']), None)
                                 
                                 if cart_item:
-                                    # SHOW +/- CONTROLS
-                                    b_minus, b_qty, b_plus = st.columns([1, 2, 1])
+                                    b_minus, b_qty, b_plus = st.columns([0.2, 0.4, 0.2], vertical_alignment="center")
                                     if b_minus.button("➖", key=f"minus_{i}"):
-                                        # Find index to update
                                         idx = st.session_state.pos_cart.index(cart_item)
                                         if st.session_state.pos_cart[idx]['Qty'] > 1:
                                             st.session_state.pos_cart[idx]['Qty'] -= 1
@@ -880,7 +857,6 @@ def main_app():
                                         st.session_state.pos_cart[idx]['Qty'] += 1
                                         st.rerun()
                                 else:
-                                    # SHOW ADD BUTTON
                                     if st.button("Add", key=f"add_{i}"):
                                         st.session_state.pos_cart.append({
                                             "Description": row['Item Name'],
@@ -922,7 +898,6 @@ def main_app():
                     pay_mode = st.radio("Payment Mode", ["Cash", "Online", "Credit"], horizontal=True)
                     
                     is_gst_active = profile.get("Is GST") == "Yes"
-                    cgst_val = 0; sgst_val = 0; igst_val = 0
                     grand_total = total_taxable 
 
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
@@ -933,7 +908,12 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
-                             cart_items_df = pd.DataFrame(st.session_state.pos_cart)
+                             # FIX: Fetch Customer Data First
+                             cust_mob = ""
+                             if sel_cust_name != "Select" and not df_cust.empty:
+                                 cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
+                                 cust_mob = str(cust_row_data.get("Mobile", ""))
+
                              items_json = json.dumps(st.session_state.pos_cart)
                              db_row = {
                                 "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
@@ -943,10 +923,15 @@ def main_app():
                             }
                              
                              if save_row_to_sheet("Invoices", db_row):
+                                 firm_name = profile.get('Business Name', 'Our Firm')
+                                 msg_body = f"""Hi {sel_cust_name}, Invoice {inv_no} from {firm_name} generated."""
+                                 
                                  pdf_buffer = io.BytesIO()
                                  buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
                                  buyer_data['Date'] = inv_date_str
                                  buyer_data['POS Code'] = '24'
+                                 buyer_data['Shipping'] = {} # Ensure Shipping key exists
+                                 
                                  totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
                                  
                                  generate_pdf(profile, buyer_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
@@ -954,7 +939,7 @@ def main_app():
                                  
                                  st.session_state.last_generated_invoice = {
                                     "no": inv_no, "pdf_bytes": pdf_buffer,
-                                    "wa_link": get_whatsapp_web_link(cust_mob, "Invoice"),
+                                    "wa_link": get_whatsapp_web_link(cust_mob, msg_body),
                                     "mail_link": None
                                 }
                                  st.session_state.pos_cart = []
@@ -1159,6 +1144,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                             buyer_data_for_pdf['Date'] = inv_date_str
                             if is_inter_state: buyer_data_for_pdf['POS Code'] = "Inter" 
                             else: buyer_data_for_pdf['POS Code'] = "24" 
+                            buyer_data_for_pdf['Shipping'] = ship_data # PASS SHIPPING DATA
 
                             generate_pdf(profile, buyer_data_for_pdf, 
                                          valid_items.to_dict('records'), inv_no, pdf_buffer, 
@@ -1178,6 +1164,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                             st.session_state.reset_invoice_trigger = True 
                             st.rerun()
 
+            # --- SUCCESS ACTIONS ---
             if st.session_state.last_generated_invoice:
                 last_inv = st.session_state.last_generated_invoice
                 st.success(f"✅ Invoice {last_inv['no']} Generated Successfully!")
@@ -1321,3 +1308,4 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
 
 if st.session_state.user_id: main_app()
 else: login_page()
+    
