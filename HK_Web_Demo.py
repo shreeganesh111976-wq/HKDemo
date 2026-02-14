@@ -24,6 +24,8 @@ from streamlit_gsheets import GSheetsConnection
 from PIL import Image
 
 # --- TRY IMPORTING BARCODE LIBRARY ---
+# This requires: pip install pyzbar
+# On Streamlit Cloud, you also need packages.txt containing: libzbar0
 try:
     from pyzbar.pyzbar import decode
 except ImportError:
