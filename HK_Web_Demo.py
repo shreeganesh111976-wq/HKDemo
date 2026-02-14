@@ -10,6 +10,8 @@ import random
 import string
 import re
 import smtplib
+import numpy as np # Added for Image Processing
+import cv2 # Added for Image Processing (OpenCV)
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, datetime
@@ -21,9 +23,9 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
-from PIL import Image, ImageEnhance # Added ImageEnhance
+from PIL import Image, ImageEnhance
 
-# --- TRY IMPORTING ZXING (BETTER LIBRARY) ---
+# --- TRY IMPORTING ZXING (THE SCANNER ENGINE) ---
 try:
     import zxingcpp
 except ImportError:
@@ -48,7 +50,36 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
-    /* Product Card Styling */
+    .bill-summary-box { 
+        background-color: #f9f9f9; 
+        padding: 20px; 
+        border-radius: 8px; 
+        border: 1px solid #e0e0e0; 
+        margin-top: 20px;
+        font-family: 'Roboto', sans-serif; 
+    }
+    
+    .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 8px;
+        font-size: 16px;
+        color: #333;
+        font-family: 'Roboto', sans-serif;
+    }
+    
+    .total-row { 
+        display: flex;
+        justify-content: space-between;
+        font-size: 20px; 
+        font-weight: bold; 
+        border-top: 1px solid #ccc; 
+        margin-top: 10px; 
+        padding-top: 10px; 
+        color: #000;
+        font-family: 'Roboto', sans-serif;
+    }
+    
     .product-card {
         border: 1px solid #ddd;
         border-radius: 10px;
@@ -67,10 +98,8 @@ st.markdown("""
         font-size: 16px;
     }
     
-    /* Button Width Fix */
     .stButton button { width: 100%; }
     
-    /* Column alignment fix */
     div[data-testid="column"] { display: flex; flex-direction: column; justify-content: flex-end; }
 </style>
 """, unsafe_allow_html=True)
@@ -96,7 +125,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPERS ---
+# --- HELPER FUNCTIONS ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -159,6 +188,43 @@ def to_excel_bytes(df):
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
+
+# --- AGGRESSIVE BARCODE READER FUNCTION ---
+def robust_barcode_decode(pil_image):
+    if zxingcpp is None: return None
+    
+    # Convert PIL to Numpy (OpenCV format)
+    try:
+        img_np = np.array(pil_image.convert('RGB'))
+    except:
+        return None
+
+    # ATTEMPT 1: Raw Image
+    results = zxingcpp.read_barcodes(img_np)
+    if results: return results[0].text
+
+    # ATTEMPT 2: Grayscale
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+    results = zxingcpp.read_barcodes(gray)
+    if results: return results[0].text
+
+    # ATTEMPT 3: High Contrast (Thresholding)
+    # This turns image into pure Black & White, helping define edges
+    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    results = zxingcpp.read_barcodes(thresh)
+    if results: return results[0].text
+    
+    # ATTEMPT 4: Center Crop (Zoom in)
+    # Sometimes surrounding noise distracts the reader
+    h, w = gray.shape
+    center_h, center_w = h // 2, w // 2
+    crop_h, crop_w = h // 2, w // 2 # Take middle 50%
+    start_x = center_w - (crop_w // 2); start_y = center_h - (crop_h // 2)
+    cropped = gray[start_y:start_y+crop_h, start_x:start_x+crop_w]
+    results = zxingcpp.read_barcodes(cropped)
+    if results: return results[0].text
+
+    return None
 
 # --- DATABASE ---
 def get_db_connection():
@@ -803,6 +869,7 @@ def main_app():
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
              
+             # TOP SECTION (Identical to Customized)
              c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
              with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -831,23 +898,20 @@ def main_app():
              st.divider()
 
              c_scan_btn, c_scan_res = st.columns([0.2, 0.8], vertical_alignment="bottom")
+             
+             # --- AGGRESSIVE SCANNER LOGIC ---
              if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
-                 if zxingcpp is None:
-                     st.error("Barcode library (zxing-cpp) not found. Please add to requirements.txt")
-                 else:
-                     img_file = st.camera_input("Scan Barcode")
-                     if img_file:
-                         img_bytes = Image.open(img_file)
-                         # Contrast enhance
-                         enhancer = ImageEnhance.Contrast(img_bytes)
-                         img_enhanced = enhancer.enhance(2.0)
-                         
-                         results = zxingcpp.read_barcodes(img_enhanced)
-                         if results:
-                             st.session_state.retail_scanner = results[0].text
-                             st.rerun()
-                         else:
-                             st.warning("No barcode detected. Try closer.")
+                 img_file = st.camera_input("Scan Barcode")
+                 if img_file:
+                     img_pil = Image.open(img_file)
+                     detected_code = robust_barcode_decode(img_pil)
+                     
+                     if detected_code:
+                         st.session_state.retail_scanner = detected_code
+                         st.success(f"Scanned: {detected_code}")
+                         st.rerun()
+                     else:
+                         st.warning("No code detected. Try holding steady and closer.")
             
              scan_code = st.text_input("Enter Barcode / Scan Result", key="retail_scanner")
              
