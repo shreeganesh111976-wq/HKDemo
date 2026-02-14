@@ -29,8 +29,8 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
+    /* Global Font Settings */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
     
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
@@ -43,7 +43,7 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
-    /* SUMMARY BOX STYLING */
+    /* SUMMARY BOX STYLING - ROBOTO FONT */
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
@@ -74,7 +74,7 @@ st.markdown("""
         font-family: 'Roboto', sans-serif;
     }
     
-    /* POS Product Card */
+    /* Product Card Styling for POS */
     .product-card {
         border: 1px solid #ddd;
         border-radius: 10px;
@@ -83,6 +83,9 @@ st.markdown("""
         background-color: white;
         transition: 0.3s;
         height: 100%;
+    }
+    .product-card:hover {
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
     }
     .product-price {
         color: #FF4B4B;
@@ -107,7 +110,7 @@ APP_NAME = "HisaabKeeper"
 LOGO_FILE = "logo.png" 
 SIGNATURE_FILE = "signature.png"
 
-# --- STATE CODES ---
+# --- FULL STATE CODES (GST MAPPING) ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -121,7 +124,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPERS ---
+# --- HELPER FUNCTIONS ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -136,6 +139,9 @@ def format_indian_currency(amount):
     else: formatted_integer = integer_part
     return f"₹ {formatted_integer}.{parts[1]}"
 
+def get_save_directory(profile_data, is_letterhead=False):
+    return "invoices_letterhead" if is_letterhead else "invoices_main"
+
 def get_whatsapp_web_link(mobile, msg):
     if not mobile: return None
     clean = re.sub(r'\D', '', str(mobile))
@@ -148,6 +154,7 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
+# --- IMAGE HELPERS ---
 def image_to_base64(image_file):
     if image_file is None: return None
     try:
@@ -187,6 +194,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -217,8 +225,10 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
     df = fetch_data(worksheet_name)
     if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
+    
     if df.empty: updated_df = new_df
     else: updated_df = pd.concat([df, new_df], ignore_index=True)
+    
     try:
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
@@ -242,7 +252,7 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except:
+    except Exception as e:
         try:
             conn.create(worksheet=worksheet_name, data=updated_df)
             st.cache_data.clear()
@@ -259,10 +269,10 @@ def update_user_profile(updated_profile_dict):
             conn.update(worksheet="Users", data=df)
             st.session_state.user_profile = df.iloc[idx[0]].to_dict()
             return True
-        except: return False
+        except Exception as e: st.error(f"Error: {e}"); return False
     return False
 
-# --- PDF GENERATOR ---
+# --- PDF GENERATION LOGIC ---
 def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
     if not is_letterhead:
         if theme == 'Formal':
@@ -446,13 +456,14 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     
     data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
     
+    last_col_idx = len(header) - 1
     style_cmds = [
         ('FONTNAME', (0,0), (-1,-1), font_body),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -549,6 +560,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
+    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -659,10 +671,17 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
+    # --- NAVIGATION LOGIC ---
     menu_options = ["Dashboard", "Customer Master", "Item Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
-    if st.session_state.menu_selection not in menu_options: st.session_state.menu_selection = "Dashboard"
+    
+    if st.session_state.menu_selection not in menu_options:
+        st.session_state.menu_selection = "Dashboard"
+        
     choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
-    if choice != st.session_state.menu_selection: st.session_state.menu_selection = choice; st.rerun()
+    
+    if choice != st.session_state.menu_selection:
+        st.session_state.menu_selection = choice
+        st.rerun()
 
     if choice == "Dashboard":
         st.header("📊 Dashboard")
@@ -841,23 +860,28 @@ def main_app():
                                 cart_item = next((item for item in st.session_state.pos_cart if item['Description'] == row['Item Name']), None)
                                 
                                 if cart_item:
-                                    b_minus, b_qty, b_plus = st.columns([0.2, 0.4, 0.2], vertical_alignment="center")
-                                    if b_minus.button("➖", key=f"minus_{i}"):
+                                    b_minus, b_qty, b_plus = st.columns([1, 1, 1], vertical_alignment="center")
+                                    if b_minus.button("➖", key=f"minus_{i}", use_container_width=True):
                                         idx = st.session_state.pos_cart.index(cart_item)
                                         if st.session_state.pos_cart[idx]['Qty'] > 1:
                                             st.session_state.pos_cart[idx]['Qty'] -= 1
                                         else:
                                             st.session_state.pos_cart.pop(idx)
+                                        
+                                        # Force Update Checkout Input
+                                        if cart_item in st.session_state.pos_cart:
+                                            st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
                                     
-                                    b_qty.markdown(f"<div style='text-align:center; font-weight:bold; padding-top:5px;'>{int(cart_item['Qty'])}</div>", unsafe_allow_html=True)
+                                    b_qty.markdown(f"<div style='text-align:center; font-weight:bold;'>{int(cart_item['Qty'])}</div>", unsafe_allow_html=True)
                                     
-                                    if b_plus.button("➕", key=f"plus_{i}"):
+                                    if b_plus.button("➕", key=f"plus_{i}", use_container_width=True):
                                         idx = st.session_state.pos_cart.index(cart_item)
                                         st.session_state.pos_cart[idx]['Qty'] += 1
+                                        st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
                                 else:
-                                    if st.button("Add", key=f"add_{i}"):
+                                    if st.button("Add", key=f"add_{i}", use_container_width=True):
                                         st.session_state.pos_cart.append({
                                             "Description": row['Item Name'],
                                             "HSN": row.get('HSN', ''),
@@ -885,7 +909,12 @@ def main_app():
                                 st.rerun()
                             
                             c_qty, c_rate = st.columns(2)
-                            new_qty = c_qty.number_input("Qty", value=float(item['Qty']), min_value=0.1, key=f"cart_qty_{idx}")
+                            
+                            # FORCE KEY-VALUE SYNC FOR QTY
+                            if f"cart_qty_{idx}" not in st.session_state:
+                                st.session_state[f"cart_qty_{idx}"] = float(item['Qty'])
+                                
+                            new_qty = c_qty.number_input("Qty", min_value=0.1, key=f"cart_qty_{idx}")
                             new_rate = c_rate.number_input("Rate", value=float(item['Rate']), min_value=0.0, key=f"cart_rate_{idx}")
                             
                             st.session_state.pos_cart[idx]['Qty'] = new_qty
@@ -930,7 +959,7 @@ def main_app():
                                  buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
                                  buyer_data['Date'] = inv_date_str
                                  buyer_data['POS Code'] = '24'
-                                 buyer_data['Shipping'] = {} # Ensure Shipping key exists
+                                 buyer_data['Shipping'] = {} 
                                  
                                  totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
                                  
@@ -1144,7 +1173,7 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                             buyer_data_for_pdf['Date'] = inv_date_str
                             if is_inter_state: buyer_data_for_pdf['POS Code'] = "Inter" 
                             else: buyer_data_for_pdf['POS Code'] = "24" 
-                            buyer_data_for_pdf['Shipping'] = ship_data # PASS SHIPPING DATA
+                            buyer_data_for_pdf['Shipping'] = ship_data 
 
                             generate_pdf(profile, buyer_data_for_pdf, 
                                          valid_items.to_dict('records'), inv_no, pdf_buffer, 
@@ -1164,7 +1193,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                             st.session_state.reset_invoice_trigger = True 
                             st.rerun()
 
-            # --- SUCCESS ACTIONS ---
             if st.session_state.last_generated_invoice:
                 last_inv = st.session_state.last_generated_invoice
                 st.success(f"✅ Invoice {last_inv['no']} Generated Successfully!")
@@ -1227,7 +1255,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
                 signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
                 
-                # Retrieve current values properly to set index
                 current_style = profile.get("BillingStyle", "Default")
                 style_options = ["Default", "Retailers", "Customized Billing Master"]
                 try: style_idx = style_options.index(current_style)
@@ -1266,7 +1293,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
                 bc3, bc4 = st.columns(2)
                 acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
-                # Auto-remove .0
                 if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
                 acc_no = acc_no_raw
 
@@ -1288,7 +1314,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 if errors:
                     for e in errors: st.error(e)
                 else:
-                    # SAVE FILES
                     if logo is not None:
                         with open(LOGO_FILE, "wb") as f:
                             f.write(logo.getbuffer())
@@ -1308,4 +1333,3 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
 
 if st.session_state.user_id: main_app()
 else: login_page()
-    
