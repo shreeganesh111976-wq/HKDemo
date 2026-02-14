@@ -21,17 +21,13 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
-from PIL import Image
+from PIL import Image, ImageEnhance # Added ImageEnhance
 
-# --- TRY IMPORTING BARCODE LIBRARY ---
-# This requires: pip install pyzbar
-# On Streamlit Cloud, you also need packages.txt containing: libzbar0
+# --- TRY IMPORTING ZXING (BETTER LIBRARY) ---
 try:
-    from pyzbar.pyzbar import decode
-    # Optional: Import ZBarSymbol to force specific types if needed, 
-    # but default decode() handles mostly everything.
+    import zxingcpp
 except ImportError:
-    decode = None
+    zxingcpp = None
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
@@ -39,7 +35,6 @@ st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="�
 # --- STYLING CSS ---
 st.markdown("""
 <style>
-    /* Global Font Settings */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     
     html, body, [class*="css"] {
@@ -53,38 +48,7 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
-    /* SUMMARY BOX STYLING */
-    .bill-summary-box { 
-        background-color: #f9f9f9; 
-        padding: 20px; 
-        border-radius: 8px; 
-        border: 1px solid #e0e0e0; 
-        margin-top: 20px;
-        font-family: 'Roboto', sans-serif; 
-    }
-    
-    .summary-row {
-        display: flex;
-        justify-content: space-between;
-        margin-bottom: 8px;
-        font-size: 16px;
-        color: #333;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    .total-row { 
-        display: flex;
-        justify-content: space-between;
-        font-size: 20px; 
-        font-weight: bold; 
-        border-top: 1px solid #ccc; 
-        margin-top: 10px; 
-        padding-top: 10px; 
-        color: #000;
-        font-family: 'Roboto', sans-serif;
-    }
-    
-    /* Product Card Styling for POS */
+    /* Product Card Styling */
     .product-card {
         border: 1px solid #ddd;
         border-radius: 10px;
@@ -467,7 +431,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -839,7 +803,6 @@ def main_app():
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
              
-             # TOP SECTION (Identical to Customized)
              c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
              with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -869,17 +832,19 @@ def main_app():
 
              c_scan_btn, c_scan_res = st.columns([0.2, 0.8], vertical_alignment="bottom")
              if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
-                 if decode is None:
-                     st.error("Barcode library (pyzbar) not loaded. Please check packages.txt")
+                 if zxingcpp is None:
+                     st.error("Barcode library (zxing-cpp) not found. Please add to requirements.txt")
                  else:
                      img_file = st.camera_input("Scan Barcode")
                      if img_file:
                          img_bytes = Image.open(img_file)
-                         # FIX: Convert to grayscale for better detection
-                         img_gray = img_bytes.convert('L') 
-                         decoded_objects = decode(img_gray)
-                         if decoded_objects:
-                             st.session_state.retail_scanner = decoded_objects[0].data.decode("utf-8")
+                         # Contrast enhance
+                         enhancer = ImageEnhance.Contrast(img_bytes)
+                         img_enhanced = enhancer.enhance(2.0)
+                         
+                         results = zxingcpp.read_barcodes(img_enhanced)
+                         if results:
+                             st.session_state.retail_scanner = results[0].text
                              st.rerun()
                          else:
                              st.warning("No barcode detected. Try closer.")
@@ -929,7 +894,7 @@ def main_app():
              
              col_menu, col_cart = st.columns([2, 1])
              
-             # RETAILER GRID (SAME AS CUSTOMIZED)
+             # RETAILER GRID
              with col_menu:
                 st.subheader("📦 Select Items")
                 if not df_items.empty:
@@ -979,7 +944,7 @@ def main_app():
                 else:
                     st.info("No items found.")
 
-             # RETAILER CART (SAME AS CUSTOMIZED)
+             # RETAILER CART
              with col_cart:
                  st.subheader("Checkout")
                  
