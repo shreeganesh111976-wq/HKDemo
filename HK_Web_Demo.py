@@ -324,7 +324,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
-    c.drawString(40, y-15, buyer.get('Name', ''))
+    c.drawString(40, y-15, str(buyer.get('Name', '')))
     
     if seller.get('Is GST', 'No') == 'Yes':
         c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
@@ -454,14 +454,13 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     
     data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
     
-    last_col_idx = len(header) - 1
     style_cmds = [
         ('FONTNAME', (0,0), (-1,-1), font_body),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -1098,6 +1097,7 @@ def main_app():
                                         else:
                                             st.session_state.pos_cart.pop(idx)
                                         
+                                        # Force Update Checkout Input
                                         if idx < len(st.session_state.pos_cart):
                                              st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
@@ -1139,6 +1139,7 @@ def main_app():
                             
                             c_qty, c_rate = st.columns(2)
                             
+                            # FORCE KEY-VALUE SYNC FOR QTY
                             if f"cart_qty_{idx}" not in st.session_state:
                                 st.session_state[f"cart_qty_{idx}"] = float(item['Qty'])
                                 
@@ -1165,6 +1166,7 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
+                             # FIX: Fetch Customer Data First
                              cust_mob = ""
                              if sel_cust_name != "Select" and not df_cust.empty:
                                  cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
@@ -1482,7 +1484,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
                 signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
                 
-                # Retrieve current values properly to set index
                 current_style = profile.get("BillingStyle", "Default")
                 style_options = ["Default", "Retailers", "Customized Billing Master"]
                 try: style_idx = style_options.index(current_style)
@@ -1521,7 +1522,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
                 bc3, bc4 = st.columns(2)
                 acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
-                # Auto-remove .0
                 if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
                 acc_no = acc_no_raw
 
@@ -1543,7 +1543,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 if errors:
                     for e in errors: st.error(e)
                 else:
-                    # SAVE FILES
                     if logo is not None:
                         with open(LOGO_FILE, "wb") as f:
                             f.write(logo.getbuffer())
