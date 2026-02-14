@@ -43,7 +43,7 @@ st.markdown("""
         color: #1E1E1E; 
     }
     
-    /* SUMMARY BOX STYLING - ROBOTO FONT */
+    /* SUMMARY BOX STYLING */
     .bill-summary-box { 
         background-color: #f9f9f9; 
         padding: 20px; 
@@ -101,16 +101,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- EMAIL CONFIGURATION ---
+# --- CONFIGURATION ---
 SENDER_EMAIL = "your_email@gmail.com"  # <--- REPLACE THIS
 SENDER_PASSWORD = "xxxx xxxx xxxx xxxx"  # <--- REPLACE THIS
-
-# --- CONSTANTS ---
 APP_NAME = "HisaabKeeper"
 LOGO_FILE = "logo.png" 
 SIGNATURE_FILE = "signature.png"
 
-# --- FULL STATE CODES (GST MAPPING) ---
+# --- STATE CODES ---
 STATE_CODES = {
     "01": "Jammu & Kashmir", "02": "Himachal Pradesh", "03": "Punjab", "04": "Chandigarh",
     "05": "Uttarakhand", "06": "Haryana", "07": "Delhi", "08": "Rajasthan", "09": "Uttar Pradesh",
@@ -124,7 +122,7 @@ STATE_CODES = {
     "99": "Centre Jurisdiction"
 }
 
-# --- HELPER FUNCTIONS ---
+# --- HELPERS ---
 def format_indian_currency(amount):
     try: amount = float(amount)
     except: return "₹ 0.00"
@@ -139,9 +137,6 @@ def format_indian_currency(amount):
     else: formatted_integer = integer_part
     return f"₹ {formatted_integer}.{parts[1]}"
 
-def get_save_directory(profile_data, is_letterhead=False):
-    return "invoices_letterhead" if is_letterhead else "invoices_main"
-
 def get_whatsapp_web_link(mobile, msg):
     if not mobile: return None
     clean = re.sub(r'\D', '', str(mobile))
@@ -154,7 +149,6 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
-# --- IMAGE HELPERS ---
 def image_to_base64(image_file):
     if image_file is None: return None
     try:
@@ -170,6 +164,9 @@ def base64_to_image(base64_string):
     if not base64_string or str(base64_string) == 'nan': return None
     try: return io.BytesIO(base64.b64decode(base64_string))
     except: return None
+
+def get_save_directory(profile_data, is_letterhead=False):
+    return "invoices_letterhead" if is_letterhead else "invoices_main"
 
 def send_otp_email(to_email, otp_code):
     if "your_email" in SENDER_EMAIL: st.error("Setup Error: Sender Email not configured."); return False
@@ -189,12 +186,11 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- DATABASE HANDLERS ---
+# --- DATABASE ---
 def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -270,7 +266,7 @@ def update_user_profile(updated_profile_dict):
         except: return False
     return False
 
-# --- PDF GENERATOR ---
+# --- PDF ---
 def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, font_header, font_body):
     if not is_letterhead:
         if theme == 'Formal':
@@ -324,7 +320,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
-    c.drawString(40, y-15, str(buyer.get('Name', '')))
+    c.drawString(40, y-15, buyer.get('Name', ''))
     
     if seller.get('Is GST', 'No') == 'Yes':
         c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
@@ -454,13 +450,14 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
     
     data.append(['Grand Total', '', '', '', '', '', f"{totals['total']:.2f}"])
     
+    last_col_idx = len(header) - 1
     style_cmds = [
         ('FONTNAME', (0,0), (-1,-1), font_body),
         ('FONTSIZE', (0, 0), (-1, -1), 9),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ('ALIGN', (1,1), (1, summary_start-1), 'LEFT'),
-        ('ALIGN', (0, summary_start), (len(header)-2,-1), 'RIGHT'),
+        ('ALIGN', (0, summary_start), (last_col_idx-1,-1), 'RIGHT'),
         ('TOPPADDING', (0,0), (-1,-1), 6),
         ('BOTTOMPADDING', (0,0), (-1,-1), 6),
         ('GRID', (0,0), (-1,-1), 0.5, grid_color)
@@ -557,6 +554,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
+    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -1029,8 +1027,8 @@ def main_app():
                                 }
                                  st.session_state.pos_cart = []
                                  st.rerun()
-                else:
-                    st.caption("Cart is Empty")
+                 else:
+                     st.caption("Cart is Empty")
 
              if st.session_state.last_generated_invoice:
                  l = st.session_state.last_generated_invoice
@@ -1440,125 +1438,6 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 if st.button("Create Another Invoice"):
                     st.session_state.last_generated_invoice = None
                     st.rerun()
-
-    elif choice == "Ledger":
-        st.header("📒 Ledger")
-        df_cust = fetch_user_data("Customers")
-        sel_cust = st.selectbox("Customer", ["Select"] + df_cust["Name"].tolist())
-        if sel_cust != "Select":
-            df_inv = fetch_user_data("Invoices")
-            df_rec = fetch_user_data("Receipts")
-            total_billed = 0; total_paid = 0
-            if not df_inv.empty and "Grand Total" in df_inv.columns:
-                total_billed = pd.to_numeric(df_inv[df_inv["Buyer Name"] == sel_cust]["Grand Total"], errors='coerce').sum()
-            if not df_rec.empty and "Amount" in df_rec.columns:
-                total_paid = pd.to_numeric(df_rec[df_rec["Party Name"] == sel_cust]["Amount"], errors='coerce').sum()
-            st.metric("Pending Balance", format_indian_currency(total_billed - total_paid))
-            with st.expander("Add Receipt"):
-                amt = st.number_input("Amount Received")
-                if st.button("Save Receipt"):
-                    save_row_to_sheet("Receipts", {"Date": str(date.today()), "Party Name": sel_cust, "Amount": amt, "Note": "Payment"})
-                    st.success("Saved!"); st.rerun()
-
-    elif choice == "Inward":
-        st.header("🚚 Inward Supply")
-        with st.form("inw"):
-            sup = st.text_input("Supplier"); val = st.number_input("Value")
-            if st.form_submit_button("Save"):
-                save_row_to_sheet("Inward", {"Date": str(date.today()), "Supplier Name": sup, "Total Value": val})
-                st.success("Saved")
-
-    elif choice == "Company Profile":
-        st.header("⚙️ Company Profile")
-        st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
-        st.subheader("Tax Configuration")
-        col_tax1, col_tax2 = st.columns([1, 2])
-        current_gst_val = profile.get("Is GST", "No")
-        gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], index=0 if current_gst_val == "Yes" else 1, horizontal=True)
-        with st.form("edit_profile"):
-            with st.expander("🏢 Company Details", expanded=True):
-                c1, c2 = st.columns(2)
-                bn = c1.text_input("Business Name", value=profile.get("Business Name", ""))
-                tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
-                c3, c4, c5 = st.columns(3)
-                logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
-                signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
-                
-                current_style = profile.get("BillingStyle", "Default")
-                style_options = ["Default", "Retailers", "Customized Billing Master"]
-                try: style_idx = style_options.index(current_style)
-                except: style_idx = 0
-                
-                billing_style_input = st.selectbox("Billing Interface Style", style_options, index=style_idx)
-                
-                current_template = profile.get("Template", "Simple")
-                template_options = ["Simple", "Modern", "Formal"]
-                try: temp_idx = template_options.index(current_template)
-                except: temp_idx = 0
-                
-                template = c5.selectbox("PDF Template", template_options, index=temp_idx)
-
-                c6, c7 = st.columns(2)
-                mob = c6.text_input("Business Mobile", value=profile.get("Mobile", ""))
-                em = c7.text_input("Business Email", value=profile.get("Email", ""))
-                tax_id_val = ""
-                if gst_selection == "Yes":
-                    tax_id_val = st.text_input("GSTIN (e.g. 24ABCDE1234F1Z5)", value=profile.get("GSTIN", ""))
-                    pan_val = profile.get("PAN", "")
-                else:
-                    tax_id_val = st.text_input("PAN Number (e.g. ABCDE1234F)", value=profile.get("PAN", ""))
-                    pan_val = tax_id_val
-                    gstin_val = ""
-            with st.expander("📍 Address Details", expanded=False):
-                a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
-                a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
-                ac1, ac2, ac3 = st.columns(3)
-                pincode = ac1.text_input("Pincode", value=profile.get("Pincode", ""))
-                dist = ac2.text_input("District", value=profile.get("District", ""))
-                state = ac3.text_input("State", value=profile.get("State", ""))
-            with st.expander("🏦 Bank & Payment Details", expanded=False):
-                bc1, bc2 = st.columns(2)
-                bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
-                branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
-                bc3, bc4 = st.columns(2)
-                acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
-                if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
-                acc_no = acc_no_raw
-
-                ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
-                upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
-            if st.form_submit_button("💾 Update Company Profile"):
-                errors = []
-                final_gstin = ""; final_pan = ""; clean_tax_val = tax_id_val.upper()
-                if gst_selection == "Yes":
-                    if not is_valid_gstin(clean_tax_val): errors.append("Invalid GSTIN! Format: 24ABCDE1234F1Z5")
-                    final_gstin = clean_tax_val
-                else:
-                    if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F")
-                    final_pan = clean_tax_val
-                
-                if acc_no and not str(acc_no).isdigit(): errors.append("Account Number must contain only digits.")
-                if upi and "@" not in upi: errors.append("Invalid UPI ID (must contain '@').")
-                
-                if errors:
-                    for e in errors: st.error(e)
-                else:
-                    if logo is not None:
-                        with open(LOGO_FILE, "wb") as f:
-                            f.write(logo.getbuffer())
-                    
-                    if signature is not None:
-                        with open(SIGNATURE_FILE, "wb") as f:
-                            f.write(signature.getbuffer())
-
-                    updated_data = {
-                        "Business Name": bn, "Tagline": tag, "Mobile": mob, "Email": em, 
-                        "Template": template, "BillingStyle": billing_style_input,
-                        "Is GST": gst_selection, "GSTIN": final_gstin, "PAN": final_pan,
-                        "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
-                        "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
-                    }
-                    if update_user_profile(updated_data): st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
 
 if st.session_state.user_id: main_app()
 else: login_page()
