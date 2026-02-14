@@ -193,17 +193,14 @@ def to_excel_bytes(df):
 def robust_barcode_decode(pil_image):
     if zxingcpp is None: return None
     try:
-        # 1. Raw
         img_np = np.array(pil_image.convert('RGB'))
         results = zxingcpp.read_barcodes(img_np)
         if results: return results[0].text
         
-        # 2. Gray
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         results = zxingcpp.read_barcodes(gray)
         if results: return results[0].text
         
-        # 3. Contrast
         enhancer = ImageEnhance.Contrast(pil_image)
         img_enhanced = enhancer.enhance(2.0)
         img_np_e = np.array(img_enhanced.convert('RGB'))
@@ -347,7 +344,7 @@ def draw_header_on_canvas(c, w, h, seller, buyer, inv_no, is_letterhead, theme, 
     
     c.setFont(font_header, 10); c.drawString(40, y, "Bill To:")
     c.setFont(font_body, 10)
-    c.drawString(40, y-15, buyer.get('Name', ''))
+    c.drawString(40, y-15, str(buyer.get('Name', '')))
     
     if seller.get('Is GST', 'No') == 'Yes':
         c.drawString(40, y-30, f"GSTIN: {buyer.get('GSTIN', 'URP')}")
@@ -809,43 +806,66 @@ def main_app():
         
         df_items = fetch_user_data("Items")
         
+        # --- TAB 1: ITEMS WITHOUT BARCODE ---
         with tab_list:
             if not df_items.empty:
-                for i, row in df_items.iterrows():
-                    with st.container(border=True):
-                        c_img, c_det, c_act = st.columns([1, 3, 1])
-                        with c_img:
-                            if row.get("Image"):
-                                try: st.image(base64_to_image(row["Image"]), width=60)
-                                except: st.write("No Img")
-                            else: st.write("No Img")
-                        
-                        with c_det:
-                            st.markdown(f"**{row['Item Name']}**")
-                            st.caption(f"Price: ₹{row['Price']} | HSN: {row.get('HSN','')} | UOM: {row['UOM']}")
-                        
-                        with c_act:
-                            if st.button("✏️ Edit", key=f"edit_list_{i}"):
-                                st.session_state.im_name_input = row['Item Name']
-                                st.session_state.im_price_input = float(row['Price'])
-                                st.session_state.im_hsn_input = row.get('HSN', '')
-                                st.session_state.im_barcode_input = row.get('Barcode', '')
-                                st.session_state.im_weight_input = row.get('Weight', '')
-                                st.toast("Loaded above.", icon="✏️")
-                                st.rerun()
-                            if st.button("🗑️ Delete", key=f"del_list_{i}"):
-                                new_df = df_items.drop(index=i)
-                                save_bulk_data("Items", new_df)
-                                st.rerun()
+                # Filter for items where barcode is empty or NaN
+                # Ensure Barcode column is string for filtering
+                df_items['Barcode'] = df_items['Barcode'].fillna('').astype(str).str.strip()
+                general_items = df_items[df_items["Barcode"] == ""]
 
+                if not general_items.empty:
+                    for i, row in general_items.iterrows():
+                        with st.container(border=True):
+                            c_img, c_det, c_act = st.columns([1, 3, 1])
+                            with c_img:
+                                if row.get("Image"):
+                                    try: st.image(base64_to_image(row["Image"]), width=60)
+                                    except: st.write("No Img")
+                                else: st.write("No Img")
+                            
+                            with c_det:
+                                st.markdown(f"**{row['Item Name']}**")
+                                st.caption(f"Price: ₹{row['Price']} | HSN: {row.get('HSN','')} | UOM: {row['UOM']}")
+                            
+                            with c_act:
+                                if st.button("✏️ Edit", key=f"edit_list_{i}"):
+                                    st.session_state.im_name_input = row['Item Name']
+                                    st.session_state.im_price_input = float(row['Price'])
+                                    st.session_state.im_hsn_input = row.get('HSN', '')
+                                    st.session_state.im_barcode_input = row.get('Barcode', '')
+                                    st.session_state.im_weight_input = row.get('Weight', '')
+                                    st.toast("Loaded above.", icon="✏️")
+                                    st.rerun()
+                                if st.button("🗑️ Delete", key=f"del_list_{i}"):
+                                    new_df = df_items.drop(index=i)
+                                    save_bulk_data("Items", new_df)
+                                    st.rerun()
+                else:
+                    st.info("No General Items found.")
+
+        # --- TAB 2: ITEMS WITH BARCODE ---
         with tab_bar:
             if not df_items.empty:
+                # Filter for items where barcode is NOT empty
                 barcode_items = df_items[df_items["Barcode"] != ""]
+                
                 if not barcode_items.empty:
                     for i, row in barcode_items.iterrows():
                         with st.container(border=True):
-                            st.markdown(f"**{row['Item Name']}** (Code: {row['Barcode']})")
-                            st.caption(f"Price: {row['Price']} | Wt: {row.get('Weight','')}")
+                            c1, c2, c3 = st.columns([3, 1, 1])
+                            c1.markdown(f"**{row['Item Name']}** (Code: {row['Barcode']})")
+                            c1.caption(f"Price: {row['Price']} | Wt: {row.get('Weight','')}")
+                            if c2.button("✏️", key=f"b_edit_{i}"):
+                                st.session_state.im_name_input = row['Item Name']
+                                st.session_state.im_price_input = float(row['Price'])
+                                st.session_state.im_barcode_input = row['Barcode']
+                                st.toast("Loaded above.", icon="✏️")
+                                st.rerun()
+                            if c3.button("🗑️", key=f"b_del_{i}"):
+                                new_df = df_items.drop(index=i)
+                                save_bulk_data("Items", new_df)
+                                st.rerun()
                 else:
                     st.info("No Barcode Items found.")
 
@@ -857,6 +877,7 @@ def main_app():
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
              
+             # TOP SECTION (Identical to Customized)
              c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
              with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -883,14 +904,8 @@ def main_app():
                 st.session_state.bm_invoice_no = inv_no
 
              st.divider()
-             
-             # --- SCANNER SECTION ---
+
              c_scan_btn, c_scan_res = st.columns([0.2, 0.8], vertical_alignment="bottom")
-             
-             # Capture Scan Code
-             scan_code = None
-             
-             # 1. Camera Input
              if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
                  if zxingcpp is None:
                      st.error("Barcode library (zxing-cpp) not found. Please add to requirements.txt")
@@ -899,20 +914,23 @@ def main_app():
                      if img_file:
                          img_pil = Image.open(img_file)
                          detected_code = robust_barcode_decode(img_pil)
+                         
                          if detected_code:
-                             scan_code = detected_code
-                             st.toast(f"Scanned: {scan_code}")
+                             st.session_state.retail_scanner = detected_code
+                             st.rerun()
                          else:
                              st.warning("No code detected. Try holding steady and closer.")
             
-             # 2. Manual/Gun Input (Overrides Camera if used)
-             manual_code = st.text_input("Enter Barcode / Scan Result", value=scan_code if scan_code else "", key="retail_scanner_input")
-             if manual_code:
-                 scan_code = manual_code
+             scan_code = st.text_input("Enter Barcode / Scan Result", key="retail_scanner")
              
-             # --- PROCESS SCAN CODE ---
              if scan_code:
-                 found_item = df_items[df_items['Barcode'] == scan_code]
+                 # Clean Input
+                 clean_scan = str(scan_code).strip()
+                 
+                 # Ensure DB Barcode column is string for comparison
+                 df_items['Barcode'] = df_items['Barcode'].fillna('').astype(str).str.strip()
+                 
+                 found_item = df_items[df_items['Barcode'] == clean_scan]
                  
                  if not found_item.empty:
                      # Item Found
@@ -934,10 +952,9 @@ def main_app():
                                 "GST Rate": 0.0
                             })
                              st.toast("Item Added to Cart!")
-                             # Clear scanner not natively possible without rerun loop, relying on user flow
                  else:
                      # Item Not Found -> Add New
-                     st.warning(f"New Barcode Detected: {scan_code}")
+                     st.warning(f"New Barcode Detected: {clean_scan}")
                      with st.expander("Add New Product Details", expanded=True):
                          with st.form("add_new_scanned_item"):
                              new_name = st.text_input("Product Name")
@@ -951,7 +968,7 @@ def main_app():
                                      # Save to DB
                                      save_row_to_sheet("Items", {
                                          "Item Name": new_name, "Price": new_price, "UOM": "PCS", 
-                                         "HSN": new_hsn, "Image": "", "Barcode": scan_code, "Weight": new_weight
+                                         "HSN": new_hsn, "Image": "", "Barcode": clean_scan, "Weight": new_weight
                                      })
                                      # Add to Cart
                                      st.session_state.pos_cart.append({
@@ -1157,6 +1174,7 @@ def main_app():
                                         else:
                                             st.session_state.pos_cart.pop(idx)
                                         
+                                        # Force Update Checkout Input
                                         if idx < len(st.session_state.pos_cart):
                                              st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
@@ -1198,6 +1216,7 @@ def main_app():
                             
                             c_qty, c_rate = st.columns(2)
                             
+                            # FORCE KEY-VALUE SYNC FOR QTY
                             if f"cart_qty_{idx}" not in st.session_state:
                                 st.session_state[f"cart_qty_{idx}"] = float(item['Qty'])
                                 
@@ -1224,6 +1243,7 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
+                             # FIX: Fetch Customer Data First
                              cust_mob = ""
                              if sel_cust_name != "Select" and not df_cust.empty:
                                  cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
