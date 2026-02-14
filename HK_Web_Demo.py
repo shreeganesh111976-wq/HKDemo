@@ -21,6 +21,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Table, TableStyle
 from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
+from PIL import Image # Added for image compression
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="HisaabKeeper Cloud", layout="wide", page_icon="🧾")
@@ -153,10 +154,19 @@ def is_valid_mobile(mobile): return re.match(r'^[6-9]\d{9}$', mobile) is not Non
 def is_valid_pan(pan): return re.match(r'^[A-Z]{5}[0-9]{4}[A-Z]{1}$', pan) is not None
 def is_valid_gstin(gstin): return re.match(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$', gstin) is not None
 
-# --- IMAGE HELPERS ---
+# --- IMAGE HELPERS (FIXED FOR COMPRESSION) ---
 def image_to_base64(image_file):
     if image_file is None: return None
-    return base64.b64encode(image_file.getvalue()).decode()
+    try:
+        # Resize and Compress Image to fit in Google Sheets Cell limit
+        img = Image.open(image_file)
+        img.thumbnail((150, 150)) # Resize to max 150x150
+        buff = io.BytesIO()
+        img = img.convert('RGB') # Convert to RGB to save as JPEG
+        img.save(buff, format="JPEG", quality=70) # Compress quality
+        return base64.b64encode(buff.getvalue()).decode()
+    except Exception as e:
+        return None
 
 def base64_to_image(base64_string):
     if not base64_string or str(base64_string) == 'nan': return None
@@ -217,22 +227,27 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
     df = fetch_data(worksheet_name)
     if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
+    
     if df.empty: updated_df = new_df
     else: updated_df = pd.concat([df, new_df], ignore_index=True)
     
     try:
-        # Try updating first
+        # Try normal update
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
     except Exception as e:
-        # If update fails (e.g. worksheet missing), try creating it
-        try:
-            conn.create(worksheet=worksheet_name, data=updated_df)
-            st.cache_data.clear()
-            return True
-        except Exception as create_err:
-            st.error(f"Error saving to database: {create_err}")
+        # If failure, check if it's because sheet is missing/invalid, then try create
+        if "sheet" in str(e).lower() or "not found" in str(e).lower():
+            try:
+                conn.create(worksheet=worksheet_name, data=updated_df)
+                st.cache_data.clear()
+                return True
+            except Exception as create_err:
+                st.error(f"Error creating table: {create_err}")
+                return False
+        else:
+            st.error(f"Error saving data: {e}")
             return False
 
 def save_bulk_data(worksheet_name, new_df_chunk):
@@ -245,14 +260,7 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except Exception as e:
-        try:
-            conn.create(worksheet=worksheet_name, data=updated_df)
-            st.cache_data.clear()
-            return True
-        except Exception as create_err:
-             st.error(f"Error: {create_err}")
-             return False
+    except Exception as e: st.error(f"Error: {e}"); return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
@@ -573,12 +581,9 @@ if "otp_generated" not in st.session_state: st.session_state.otp_generated = Non
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
 if "last_generated_invoice" not in st.session_state: st.session_state.last_generated_invoice = None
-
-# Keys for auto-clearing widgets in Billing Master
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
-# Navigation state
 if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 if "pos_cart" not in st.session_state: st.session_state.pos_cart = []
 
