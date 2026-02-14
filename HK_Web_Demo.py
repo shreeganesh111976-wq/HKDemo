@@ -28,6 +28,8 @@ from PIL import Image
 # On Streamlit Cloud, you also need packages.txt containing: libzbar0
 try:
     from pyzbar.pyzbar import decode
+    # Optional: Import ZBarSymbol to force specific types if needed, 
+    # but default decode() handles mostly everything.
 except ImportError:
     decode = None
 
@@ -867,13 +869,20 @@ def main_app():
 
              c_scan_btn, c_scan_res = st.columns([0.2, 0.8], vertical_alignment="bottom")
              if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
-                 img_file = st.camera_input("Scan Barcode")
-                 if img_file and decode:
-                     img_bytes = Image.open(img_file)
-                     decoded_objects = decode(img_bytes)
-                     if decoded_objects:
-                         st.session_state.retail_scanner = decoded_objects[0].data.decode("utf-8")
-                         st.rerun()
+                 if decode is None:
+                     st.error("Barcode library (pyzbar) not loaded. Please check packages.txt")
+                 else:
+                     img_file = st.camera_input("Scan Barcode")
+                     if img_file:
+                         img_bytes = Image.open(img_file)
+                         # FIX: Convert to grayscale for better detection
+                         img_gray = img_bytes.convert('L') 
+                         decoded_objects = decode(img_gray)
+                         if decoded_objects:
+                             st.session_state.retail_scanner = decoded_objects[0].data.decode("utf-8")
+                             st.rerun()
+                         else:
+                             st.warning("No barcode detected. Try closer.")
             
              scan_code = st.text_input("Enter Barcode / Scan Result", key="retail_scanner")
              
