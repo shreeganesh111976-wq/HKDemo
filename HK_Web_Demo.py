@@ -194,12 +194,11 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
-    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
         "Customers": ["UserID", "Name", "GSTIN", "Address 1", "Address 2", "Address 3", "State", "Mobile", "Email"],
-        "Items": ["UserID", "Item Name", "Price", "UOM", "HSN", "Image", "Barcode", "Weight"], # UPDATED SCHEMA
+        "Items": ["UserID", "Item Name", "Price", "UOM", "HSN", "Image", "Barcode", "Weight"],
         "Invoices": ["UserID", "Bill No", "Date", "Buyer Name", "Items", "Total Taxable", "CGST", "SGST", "IGST", "Grand Total", "Ship Name", "Ship GSTIN", "Ship Addr1", "Ship Addr2", "Ship Addr3", "Payment Mode"],
         "Receipts": ["UserID", "Date", "Party Name", "Amount", "Note"],
         "Inward": ["UserID", "Date", "Supplier Name", "Total Value"]
@@ -558,6 +557,7 @@ def generate_pdf(seller, buyer, items, inv_no, path, totals, is_letterhead=False
                     c.drawCentredString(w/2, 25, f"Page {total_pages} of {total_pages}")
                     hsn_table.drawOn(c, 30, y_start_new - hth)
         c.showPage()
+    
     c.save()
 
 # --- SESSION STATE INITIALIZATION ---
@@ -670,10 +670,17 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
+    # --- NAVIGATION LOGIC ---
     menu_options = ["Dashboard", "Customer Master", "Item Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
-    if st.session_state.menu_selection not in menu_options: st.session_state.menu_selection = "Dashboard"
+    
+    if st.session_state.menu_selection not in menu_options:
+        st.session_state.menu_selection = "Dashboard"
+        
     choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
-    if choice != st.session_state.menu_selection: st.session_state.menu_selection = choice; st.rerun()
+    
+    if choice != st.session_state.menu_selection:
+        st.session_state.menu_selection = choice
+        st.rerun()
 
     if choice == "Dashboard":
         st.header("📊 Dashboard")
@@ -768,7 +775,6 @@ def main_app():
                         "HSN": item_hsn, "Image": img_str, "Barcode": item_bar, "Weight": item_weight
                     }):
                         st.success("Item Saved!")
-                        # Clear keys
                         keys_to_clear = ["im_name_input", "im_price_input", "im_hsn_input", "im_barcode_input", "im_weight_input"]
                         for k in keys_to_clear:
                              if k in st.session_state: del st.session_state[k]
@@ -827,16 +833,12 @@ def main_app():
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
 
-             # SCANNER INPUT
              scan_code = st.text_input("📷 Scan Barcode / Enter Code", key="retail_scanner")
              
-             # LOGIC: If scanned
              if scan_code:
-                 # Check DB
                  found_item = df_items[df_items['Barcode'] == scan_code]
                  
                  if not found_item.empty:
-                     # Item Found
                      item_data = found_item.iloc[0]
                      st.success(f"Found: **{item_data['Item Name']}** - ₹{item_data['Price']}")
                      
@@ -849,10 +851,8 @@ def main_app():
                             "Rate": float(item_data['Price']),
                             "GST Rate": 0.0
                         })
-                         # Clear scanner hack not possible easily in Streamlit without rerun, so we rely on user next scan
                          st.toast("Item Added!")
                  else:
-                     # New Item Logic
                      st.warning(f"New Barcode: {scan_code}")
                      with st.expander("Add New Product Details", expanded=True):
                          new_name = st.text_input("Product Name")
@@ -863,12 +863,10 @@ def main_app():
                          
                          if st.button("Save & Add to Cart"):
                              if new_name:
-                                 # 1. Save to Item Master
                                  save_row_to_sheet("Items", {
                                      "Item Name": new_name, "Price": new_price, "UOM": "PCS", 
                                      "HSN": new_hsn, "Image": "", "Barcode": scan_code, "Weight": new_weight
                                  })
-                                 # 2. Add to Cart
                                  st.session_state.pos_cart.append({
                                     "Description": new_name, "HSN": new_hsn, "Qty": 1.0, "UOM": "PCS",
                                     "Rate": float(new_price), "GST Rate": 0.0
@@ -877,40 +875,72 @@ def main_app():
                                  time.sleep(1); st.rerun()
 
              st.divider()
-             # Reuse POS Cart & Generation Layout
-             # ... (Copying Cart Logic Below) ...
+             
              col_cart_l, col_cart_r = st.columns([2, 1])
              with col_cart_r:
                  st.subheader("Checkout")
-                 # ... (Cart logic same as Customized below) ...
-                 # For brevity, reusing the Customize logic block below fully instead of duplicating code
-                 # In a real refactor, this cart logic would be a function. 
-                 # Since "Do not touch other code" is strict, I will implement the FULL Cart logic in the "Customized" block 
-                 # and just show the scanner here, but the user asked for "Retailer" to work.
-                 # So I will replicate the Cart Logic here.
                  
                  if st.session_state.pos_cart:
                     total_taxable = 0
                     grand_total = 0
+                    
                     for idx, item in enumerate(st.session_state.pos_cart):
                         with st.container(border=True):
                             c_name, c_del = st.columns([4, 1])
                             c_name.write(f"**{item['Description']}**")
                             if c_del.button("🗑️", key=f"ret_del_{idx}"):
                                 st.session_state.pos_cart.pop(idx); st.rerun()
+                            
                             c_qty, c_rate = st.columns(2)
+                            
+                            if f"ret_qty_{idx}" not in st.session_state:
+                                st.session_state[f"ret_qty_{idx}"] = float(item['Qty'])
+
                             new_qty = c_qty.number_input("Qty", value=float(item['Qty']), min_value=0.1, key=f"ret_qty_{idx}")
                             new_rate = c_rate.number_input("Rate", value=float(item['Rate']), min_value=0.0, key=f"ret_rate_{idx}")
+                            
                             st.session_state.pos_cart[idx]['Qty'] = new_qty
                             st.session_state.pos_cart[idx]['Rate'] = new_rate
+                            
                             total_taxable += (new_qty * new_rate)
                     
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
-                    # ... Generation buttons ...
-                    # (Simplified for Retailer view based on constraints, or copy full generation logic if needed)
-                    # Assuming User wants full generation capabilities here too.
                     
-             # ... End Retailer ...
+                    inv_no = st.text_input("Inv No", key="ret_inv_no")
+                    sel_cust_name = st.selectbox("Customer", ["Select"] + df_cust["Name"].tolist(), key="ret_cust")
+                    pay_mode = st.radio("Mode", ["Cash", "UPI"], horizontal=True, key="ret_pay")
+
+                    if st.button("Generate Bill", type="primary"):
+                        if not inv_no: st.error("Inv No Req")
+                        else:
+                             # ... Same generation logic as Customized ...
+                             items_json = json.dumps(st.session_state.pos_cart)
+                             grand_total = total_taxable
+                             db_row = {
+                                "Bill No": inv_no, "Date": str(date.today().strftime("%d/%m/%Y")), "Buyer Name": sel_cust_name, 
+                                "Items": items_json, "Total Taxable": total_taxable, 
+                                "Grand Total": grand_total, "Payment Mode": pay_mode,
+                                "CGST": 0, "SGST": 0, "IGST": 0
+                            }
+                             if save_row_to_sheet("Invoices", db_row):
+                                 pdf_buffer = io.BytesIO()
+                                 cust_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict() if sel_cust_name != "Select" else {"Name": "Cash Customer", "Address 1": "", "Mobile": ""}
+                                 cust_data['Date'] = str(date.today().strftime("%d/%m/%Y"))
+                                 
+                                 totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
+                                 
+                                 generate_pdf(profile, cust_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
+                                 
+                                 st.session_state.last_generated_invoice = {
+                                    "no": inv_no, "pdf_bytes": pdf_buffer,
+                                    "wa_link": None, "mail_link": None
+                                }
+                                 st.session_state.pos_cart = []
+                                 st.rerun()
+
+             if st.session_state.last_generated_invoice:
+                 l = st.session_state.last_generated_invoice
+                 st.download_button("Download PDF", l['pdf_bytes'], "inv.pdf")
         
         elif billing_style == "Customized Billing Master":
             st.markdown(f"<div class='bill-header'>🧾 New Invoice (Customized)</div>", unsafe_allow_html=True)
@@ -1313,6 +1343,125 @@ To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp
                 if st.button("Create Another Invoice"):
                     st.session_state.last_generated_invoice = None
                     st.rerun()
+
+    elif choice == "Ledger":
+        st.header("📒 Ledger")
+        df_cust = fetch_user_data("Customers")
+        sel_cust = st.selectbox("Customer", ["Select"] + df_cust["Name"].tolist())
+        if sel_cust != "Select":
+            df_inv = fetch_user_data("Invoices")
+            df_rec = fetch_user_data("Receipts")
+            total_billed = 0; total_paid = 0
+            if not df_inv.empty and "Grand Total" in df_inv.columns:
+                total_billed = pd.to_numeric(df_inv[df_inv["Buyer Name"] == sel_cust]["Grand Total"], errors='coerce').sum()
+            if not df_rec.empty and "Amount" in df_rec.columns:
+                total_paid = pd.to_numeric(df_rec[df_rec["Party Name"] == sel_cust]["Amount"], errors='coerce').sum()
+            st.metric("Pending Balance", format_indian_currency(total_billed - total_paid))
+            with st.expander("Add Receipt"):
+                amt = st.number_input("Amount Received")
+                if st.button("Save Receipt"):
+                    save_row_to_sheet("Receipts", {"Date": str(date.today()), "Party Name": sel_cust, "Amount": amt, "Note": "Payment"})
+                    st.success("Saved!"); st.rerun()
+
+    elif choice == "Inward":
+        st.header("🚚 Inward Supply")
+        with st.form("inw"):
+            sup = st.text_input("Supplier"); val = st.number_input("Value")
+            if st.form_submit_button("Save"):
+                save_row_to_sheet("Inward", {"Date": str(date.today()), "Supplier Name": sup, "Total Value": val})
+                st.success("Saved")
+
+    elif choice == "Company Profile":
+        st.header("⚙️ Company Profile")
+        st.info(f"🔒 System User ID: {st.session_state.user_id} (16-Digit Unique Code)")
+        st.subheader("Tax Configuration")
+        col_tax1, col_tax2 = st.columns([1, 2])
+        current_gst_val = profile.get("Is GST", "No")
+        gst_selection = col_tax1.radio("Registered in GST?", ["Yes", "No"], index=0 if current_gst_val == "Yes" else 1, horizontal=True)
+        with st.form("edit_profile"):
+            with st.expander("🏢 Company Details", expanded=True):
+                c1, c2 = st.columns(2)
+                bn = c1.text_input("Business Name", value=profile.get("Business Name", ""))
+                tag = c2.text_input("Tagline", value=profile.get("Tagline", ""))
+                c3, c4, c5 = st.columns(3)
+                logo = c3.file_uploader("Upload Company Logo (PNG/JPG)", type=['png', 'jpg'])
+                signature = c4.file_uploader("Upload Signature (PNG/JPG)", type=['png', 'jpg'])
+                
+                current_style = profile.get("BillingStyle", "Default")
+                style_options = ["Default", "Retailers", "Customized Billing Master"]
+                try: style_idx = style_options.index(current_style)
+                except: style_idx = 0
+                
+                billing_style_input = st.selectbox("Billing Interface Style", style_options, index=style_idx)
+                
+                current_template = profile.get("Template", "Simple")
+                template_options = ["Simple", "Modern", "Formal"]
+                try: temp_idx = template_options.index(current_template)
+                except: temp_idx = 0
+                
+                template = c5.selectbox("PDF Template", template_options, index=temp_idx)
+
+                c6, c7 = st.columns(2)
+                mob = c6.text_input("Business Mobile", value=profile.get("Mobile", ""))
+                em = c7.text_input("Business Email", value=profile.get("Email", ""))
+                tax_id_val = ""
+                if gst_selection == "Yes":
+                    tax_id_val = st.text_input("GSTIN (e.g. 24ABCDE1234F1Z5)", value=profile.get("GSTIN", ""))
+                    pan_val = profile.get("PAN", "")
+                else:
+                    tax_id_val = st.text_input("PAN Number (e.g. ABCDE1234F)", value=profile.get("PAN", ""))
+                    pan_val = tax_id_val
+                    gstin_val = ""
+            with st.expander("📍 Address Details", expanded=False):
+                a1 = st.text_input("Address Line 1", value=profile.get("Addr1", ""))
+                a2 = st.text_input("Address Line 2", value=profile.get("Addr2", ""))
+                ac1, ac2, ac3 = st.columns(3)
+                pincode = ac1.text_input("Pincode", value=profile.get("Pincode", ""))
+                dist = ac2.text_input("District", value=profile.get("District", ""))
+                state = ac3.text_input("State", value=profile.get("State", ""))
+            with st.expander("🏦 Bank & Payment Details", expanded=False):
+                bc1, bc2 = st.columns(2)
+                bank_name = bc1.text_input("Bank Name", value=profile.get("Bank Name", ""))
+                branch = bc2.text_input("Branch Name", value=profile.get("Branch", ""))
+                bc3, bc4 = st.columns(2)
+                acc_no_raw = bc3.text_input("Account Number (Numeric Only)", value=profile.get("Account No", ""))
+                if str(acc_no_raw).endswith('.0'): acc_no_raw = str(acc_no_raw)[:-2]
+                acc_no = acc_no_raw
+
+                ifsc = bc4.text_input("IFSC Code", value=profile.get("IFSC", ""))
+                upi = st.text_input("UPI ID (must contain @)", value=profile.get("UPI", ""))
+            if st.form_submit_button("💾 Update Company Profile"):
+                errors = []
+                final_gstin = ""; final_pan = ""; clean_tax_val = tax_id_val.upper()
+                if gst_selection == "Yes":
+                    if not is_valid_gstin(clean_tax_val): errors.append("Invalid GSTIN! Format: 24ABCDE1234F1Z5")
+                    final_gstin = clean_tax_val
+                else:
+                    if not is_valid_pan(clean_tax_val): errors.append("Invalid PAN! Format: ABCDE1234F")
+                    final_pan = clean_tax_val
+                
+                if acc_no and not str(acc_no).isdigit(): errors.append("Account Number must contain only digits.")
+                if upi and "@" not in upi: errors.append("Invalid UPI ID (must contain '@').")
+                
+                if errors:
+                    for e in errors: st.error(e)
+                else:
+                    if logo is not None:
+                        with open(LOGO_FILE, "wb") as f:
+                            f.write(logo.getbuffer())
+                    
+                    if signature is not None:
+                        with open(SIGNATURE_FILE, "wb") as f:
+                            f.write(signature.getbuffer())
+
+                    updated_data = {
+                        "Business Name": bn, "Tagline": tag, "Mobile": mob, "Email": em, 
+                        "Template": template, "BillingStyle": billing_style_input,
+                        "Is GST": gst_selection, "GSTIN": final_gstin, "PAN": final_pan,
+                        "Addr1": a1, "Addr2": a2, "Pincode": pincode, "District": dist, "State": state,
+                        "Bank Name": bank_name, "Branch": branch, "Account No": acc_no, "IFSC": ifsc, "UPI": upi
+                    }
+                    if update_user_profile(updated_data): st.success("Profile Updated Successfully!"); time.sleep(1); st.rerun()
 
 if st.session_state.user_id: main_app()
 else: login_page()
