@@ -8,4 +8,5 @@ qrcode[pil]
 xlsxwriter
 pillow
 zxing-cpp
+numpy
 opencv-python-headless
