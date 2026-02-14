@@ -6,5 +6,6 @@ altair
 st-gsheets-connection
 qrcode[pil]
 xlsxwriter
-pyzbar
 pillow
+zxing-cpp
+opencv-python-headless
