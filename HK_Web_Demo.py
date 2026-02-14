@@ -217,11 +217,23 @@ def save_row_to_sheet(worksheet_name, new_row_dict):
     df = fetch_data(worksheet_name)
     if "UserID" not in new_row_dict: new_row_dict["UserID"] = st.session_state["user_id"]
     new_df = pd.DataFrame([new_row_dict])
-    updated_df = pd.concat([df, new_df], ignore_index=True) if not df.empty else new_df
+    if df.empty: updated_df = new_df
+    else: updated_df = pd.concat([df, new_df], ignore_index=True)
+    
     try:
+        # Try updating first
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
-    except Exception as e: st.error(f"Error: {e}")
+        return True
+    except Exception as e:
+        # If update fails (e.g. worksheet missing), try creating it
+        try:
+            conn.create(worksheet=worksheet_name, data=updated_df)
+            st.cache_data.clear()
+            return True
+        except Exception as create_err:
+            st.error(f"Error saving to database: {create_err}")
+            return False
 
 def save_bulk_data(worksheet_name, new_df_chunk):
     conn = get_db_connection()
@@ -233,7 +245,14 @@ def save_bulk_data(worksheet_name, new_df_chunk):
         conn.update(worksheet=worksheet_name, data=updated_df)
         st.cache_data.clear()
         return True
-    except Exception as e: st.error(f"Error: {e}"); return False
+    except Exception as e:
+        try:
+            conn.create(worksheet=worksheet_name, data=updated_df)
+            st.cache_data.clear()
+            return True
+        except Exception as create_err:
+             st.error(f"Error: {create_err}")
+             return False
 
 def update_user_profile(updated_profile_dict):
     conn = get_db_connection()
@@ -554,9 +573,12 @@ if "otp_generated" not in st.session_state: st.session_state.otp_generated = Non
 if "otp_email" not in st.session_state: st.session_state.otp_email = None
 if "reg_temp_data" not in st.session_state: st.session_state.reg_temp_data = {}
 if "last_generated_invoice" not in st.session_state: st.session_state.last_generated_invoice = None
+
+# Keys for auto-clearing widgets in Billing Master
 if "bm_cust_idx" not in st.session_state: st.session_state.bm_cust_idx = 0
 if "bm_date" not in st.session_state: st.session_state.bm_date = date.today()
 if "reset_invoice_trigger" not in st.session_state: st.session_state.reset_invoice_trigger = False
+# Navigation state
 if "menu_selection" not in st.session_state: st.session_state.menu_selection = "Dashboard"
 if "pos_cart" not in st.session_state: st.session_state.pos_cart = []
 
@@ -714,10 +736,10 @@ def main_app():
             if st.button("Save Customer Data", type="primary"):
                 if not c_name: st.error("Customer Name is required.")
                 else:
-                    save_row_to_sheet("Customers", {
+                    if save_row_to_sheet("Customers", {
                         "Name": c_name, "GSTIN": c_gst, "Address 1": addr1, "Address 2": addr2, "Address 3": addr3, "State": state_val, "Mobile": mob, "Email": email
-                    })
-                    st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
+                    }):
+                        st.success("Customer Saved Successfully!"); time.sleep(1); st.rerun()
 
         with st.expander("📋 Customer Database", expanded=False):
             view_df = fetch_user_data("Customers")
@@ -741,11 +763,11 @@ def main_app():
                 if not item_name: st.error("Item Name is required")
                 else:
                     img_str = image_to_base64(item_img) if item_img else ""
-                    save_row_to_sheet("Items", {
+                    if save_row_to_sheet("Items", {
                         "Item Name": item_name, "Price": item_price, "UOM": item_uom, 
                         "HSN": item_hsn, "Image": img_str
-                    })
-                    st.success("Item Saved!"); time.sleep(1); st.rerun()
+                    }):
+                        st.success("Item Saved!"); time.sleep(1); st.rerun()
         
         st.divider()
         st.subheader("📋 Item List")
@@ -863,6 +885,14 @@ def main_app():
                     st.divider()
                     pay_mode = st.radio("Payment Mode", ["Cash", "Online", "Credit"], horizontal=True)
                     
+                    # Totals Logic (Simplified for POS)
+                    is_gst_active = profile.get("Is GST") == "Yes"
+                    cgst_val = 0; sgst_val = 0; igst_val = 0
+                    
+                    # Simple tax logic for POS (assumes 18% default if active, or based on item master if expanded)
+                    # For this demo, we treat Total Taxable as Grand Total unless tax logic expanded
+                    grand_total = total_taxable 
+
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
                     
                     if st.button("✅ Generate Invoice", type="primary", use_container_width=True):
@@ -874,43 +904,33 @@ def main_app():
                              # Convert Cart to Standard Item Format for PDF Generator
                              cart_items_df = pd.DataFrame(st.session_state.pos_cart)
                              
-                             # Calculate Taxes (Simplified for POS Demo)
-                             is_gst_active = profile.get("Is GST") == "Yes"
-                             # For demo, assuming intra-state
-                             gst_val = 0
-                             if is_gst_active:
-                                 pass 
-                             
-                             grand_total = total_taxable # + taxes
-                             
-                             # Save to DB
                              items_json = json.dumps(st.session_state.pos_cart)
                              db_row = {
                                 "Bill No": inv_no, "Date": inv_date_str, "Buyer Name": sel_cust_name, 
                                 "Items": items_json, "Total Taxable": total_taxable, 
                                 "Grand Total": grand_total, "Payment Mode": pay_mode,
-                                "CGST": 0, "SGST": 0, "IGST": 0 # simplified
+                                "CGST": 0, "SGST": 0, "IGST": 0 # simplified for POS demo
                             }
-                             save_row_to_sheet("Invoices", db_row)
-
-                             # Generate PDF
-                             pdf_buffer = io.BytesIO()
-                             buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
-                             buyer_data['Date'] = inv_date_str
-                             buyer_data['POS Code'] = '24'
                              
-                             totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
-                             
-                             generate_pdf(profile, buyer_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
-                             pdf_buffer.seek(0)
-                             
-                             st.session_state.last_generated_invoice = {
-                                "no": inv_no, "pdf_bytes": pdf_buffer,
-                                "wa_link": get_whatsapp_web_link(cust_mob, "Invoice"),
-                                "mail_link": None
-                            }
-                             st.session_state.pos_cart = [] # Clear Cart
-                             st.rerun()
+                             if save_row_to_sheet("Invoices", db_row):
+                                 # Generate PDF
+                                 pdf_buffer = io.BytesIO()
+                                 buyer_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
+                                 buyer_data['Date'] = inv_date_str
+                                 buyer_data['POS Code'] = '24'
+                                 
+                                 totals = {'taxable': total_taxable, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total': grand_total, 'is_intra': True}
+                                 
+                                 generate_pdf(profile, buyer_data, st.session_state.pos_cart, inv_no, pdf_buffer, totals)
+                                 pdf_buffer.seek(0)
+                                 
+                                 st.session_state.last_generated_invoice = {
+                                    "no": inv_no, "pdf_bytes": pdf_buffer,
+                                    "wa_link": get_whatsapp_web_link(cust_mob, "Invoice"),
+                                    "mail_link": None
+                                }
+                                 st.session_state.pos_cart = [] # Clear Cart
+                                 st.rerun()
 
                 else:
                     st.caption("Cart is Empty")
@@ -1084,11 +1104,11 @@ def main_app():
                             "Ship Name": ship_data.get("Name",""), "Ship GSTIN": ship_data.get("GSTIN",""),
                             "Ship Addr1": ship_data.get("Addr1",""), "Ship Addr2": ship_data.get("Addr2",""), "Ship Addr3": ship_data.get("Addr3","")
                         }
-                        save_row_to_sheet("Invoices", db_row)
                         
-                        firm_name = profile.get('Business Name', 'Our Firm')
-                        contact = f"{profile.get('Mobile','')}"
-                        msg_body = f"""Hi *{sel_cust_name}*,
+                        if save_row_to_sheet("Invoices", db_row):
+                            firm_name = profile.get('Business Name', 'Our Firm')
+                            contact = f"{profile.get('Mobile','')}"
+                            msg_body = f"""Hi *{sel_cust_name}*,
 
 Greetings from *{firm_name}*. I’m sending over the invoice *{inv_no}* dated *{inv_date_str}* for *{format_indian_currency(grand_total)}*. The details are included in the attachment for your review.
 
@@ -1101,41 +1121,41 @@ Thanks again for your cooperation and continued support.
 This mail is autogenerated through the *HisaabKeeper! Billing Software*.
 
 To get demo or Free trial connect us on hello.hisaabkeeper@gmail.com or whatsapp us on +91 6353953790"""
-                        
-                        pdf_buffer = io.BytesIO()
-                        
-                        totals_for_pdf = {
-                            'taxable': total_taxable, 
-                            'cgst': cgst_val, 
-                            'sgst': sgst_val, 
-                            'igst': igst_val, 
-                            'total': grand_total,
-                            'is_intra': not is_inter_state 
-                        }
-                        
-                        profile['Template'] = profile.get('Template', 'Simple')
-                        buyer_data_for_pdf = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
-                        buyer_data_for_pdf['Date'] = inv_date_str
-                        if is_inter_state: buyer_data_for_pdf['POS Code'] = "Inter" 
-                        else: buyer_data_for_pdf['POS Code'] = "24" 
+                            
+                            pdf_buffer = io.BytesIO()
+                            
+                            totals_for_pdf = {
+                                'taxable': total_taxable, 
+                                'cgst': cgst_val, 
+                                'sgst': sgst_val, 
+                                'igst': igst_val, 
+                                'total': grand_total,
+                                'is_intra': not is_inter_state 
+                            }
+                            
+                            profile['Template'] = profile.get('Template', 'Simple')
+                            buyer_data_for_pdf = df_cust[df_cust["Name"] == sel_cust_name].iloc[0].to_dict()
+                            buyer_data_for_pdf['Date'] = inv_date_str
+                            if is_inter_state: buyer_data_for_pdf['POS Code'] = "Inter" 
+                            else: buyer_data_for_pdf['POS Code'] = "24" 
 
-                        generate_pdf(profile, buyer_data_for_pdf, 
-                                     valid_items.to_dict('records'), inv_no, pdf_buffer, 
-                                     totals_for_pdf, is_letterhead=False) 
-                        
-                        pdf_buffer.seek(0)
-                        
-                        st.session_state.last_generated_invoice = {
-                            "no": inv_no, 
-                            "pdf_bytes": pdf_buffer,
-                            "wa_link": get_whatsapp_web_link(cust_mob, msg_body) if cust_mob else None,
-                            "mail_link": f"mailto:{cust_email}?subject={urllib.parse.quote(f'Invoice {inv_no} from {firm_name}')}&body={urllib.parse.quote(msg_body)}" if cust_email else None
-                        }
-                        
-                        st.session_state.bm_cust_idx = 0
-                        st.session_state.bm_date = date.today()
-                        st.session_state.reset_invoice_trigger = True 
-                        st.rerun()
+                            generate_pdf(profile, buyer_data_for_pdf, 
+                                         valid_items.to_dict('records'), inv_no, pdf_buffer, 
+                                         totals_for_pdf, is_letterhead=False) 
+                            
+                            pdf_buffer.seek(0)
+                            
+                            st.session_state.last_generated_invoice = {
+                                "no": inv_no, 
+                                "pdf_bytes": pdf_buffer,
+                                "wa_link": get_whatsapp_web_link(cust_mob, msg_body) if cust_mob else None,
+                                "mail_link": f"mailto:{cust_email}?subject={urllib.parse.quote(f'Invoice {inv_no} from {firm_name}')}&body={urllib.parse.quote(msg_body)}" if cust_email else None
+                            }
+                            
+                            st.session_state.bm_cust_idx = 0
+                            st.session_state.bm_date = date.today()
+                            st.session_state.reset_invoice_trigger = True 
+                            st.rerun()
 
             # --- SUCCESS ACTIONS ---
             if st.session_state.last_generated_invoice:
