@@ -186,6 +186,7 @@ def get_db_connection():
     return st.connection("gsheets", type=GSheetsConnection)
 
 def fetch_data(worksheet_name):
+    """Fetches data and enforces schema."""
     conn = get_db_connection()
     schema = {
         "Users": ["UserID", "Username", "Password", "Business Name", "Tagline", "Is GST", "GSTIN", "PAN", "Mobile", "Email", "Template", "BillingStyle", "Addr1", "Addr2", "Pincode", "District", "State", "Bank Name", "Branch", "Account No", "IFSC", "UPI"],
@@ -646,10 +647,17 @@ def main_app():
     if st.sidebar.button("Logout"):
         st.session_state.user_id = None; st.session_state.user_profile = {}; st.session_state.auth_mode = "login"; st.rerun()
     
+    # --- NAVIGATION LOGIC ---
     menu_options = ["Dashboard", "Customer Master", "Item Master", "Billing Master", "Ledger", "Inward", "Company Profile"]
-    if st.session_state.menu_selection not in menu_options: st.session_state.menu_selection = "Dashboard"
+    
+    if st.session_state.menu_selection not in menu_options:
+        st.session_state.menu_selection = "Dashboard"
+        
     choice = st.sidebar.radio("Menu", menu_options, index=menu_options.index(st.session_state.menu_selection), key="nav_radio")
-    if choice != st.session_state.menu_selection: st.session_state.menu_selection = choice; st.rerun()
+    
+    if choice != st.session_state.menu_selection:
+        st.session_state.menu_selection = choice
+        st.rerun()
 
     if choice == "Dashboard":
         st.header("📊 Dashboard")
@@ -855,11 +863,6 @@ def main_app():
                     st.divider()
                     pay_mode = st.radio("Payment Mode", ["Cash", "Online", "Credit"], horizontal=True)
                     
-                    # Totals
-                    # (Simple logic for POS - assumes intra-state/default tax logic matching profile if needed, 
-                    # but for this specific request we focus on the UI flow)
-                    # We will reuse the main tax logic calculation during generation
-                    
                     st.markdown(f"### Total: {format_indian_currency(total_taxable)}")
                     
                     if st.button("✅ Generate Invoice", type="primary", use_container_width=True):
@@ -871,15 +874,11 @@ def main_app():
                              # Convert Cart to Standard Item Format for PDF Generator
                              cart_items_df = pd.DataFrame(st.session_state.pos_cart)
                              
-                             # ... (Logic identical to Default Master for Saving/PDF) ...
                              # Calculate Taxes (Simplified for POS Demo)
-                             # In production, fetch customer state etc.
                              is_gst_active = profile.get("Is GST") == "Yes"
                              # For demo, assuming intra-state
                              gst_val = 0
                              if is_gst_active:
-                                 # Assume 18% default for POS items if not specified, or 0
-                                 # Ideally fetch from cart item if added
                                  pass 
                              
                              grand_total = total_taxable # + taxes
