@@ -10,8 +10,8 @@ import random
 import string
 import re
 import smtplib
-import numpy as np # Added for Image Processing
-import cv2 # Added for Image Processing (OpenCV)
+import numpy as np
+import cv2
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import date, datetime
@@ -25,7 +25,7 @@ from reportlab.lib.units import inch
 from streamlit_gsheets import GSheetsConnection
 from PIL import Image, ImageEnhance
 
-# --- TRY IMPORTING ZXING (THE SCANNER ENGINE) ---
+# --- TRY IMPORTING ZXING ---
 try:
     import zxingcpp
 except ImportError:
@@ -189,42 +189,29 @@ def to_excel_bytes(df):
         df.to_excel(writer, index=False, sheet_name='Sheet1')
     return output.getvalue()
 
-# --- AGGRESSIVE BARCODE READER FUNCTION ---
+# --- SCANNER ENGINE ---
 def robust_barcode_decode(pil_image):
     if zxingcpp is None: return None
-    
-    # Convert PIL to Numpy (OpenCV format)
     try:
+        # 1. Raw
         img_np = np.array(pil_image.convert('RGB'))
-    except:
+        results = zxingcpp.read_barcodes(img_np)
+        if results: return results[0].text
+        
+        # 2. Gray
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        results = zxingcpp.read_barcodes(gray)
+        if results: return results[0].text
+        
+        # 3. Contrast
+        enhancer = ImageEnhance.Contrast(pil_image)
+        img_enhanced = enhancer.enhance(2.0)
+        img_np_e = np.array(img_enhanced.convert('RGB'))
+        results = zxingcpp.read_barcodes(img_np_e)
+        if results: return results[0].text
+        
         return None
-
-    # ATTEMPT 1: Raw Image
-    results = zxingcpp.read_barcodes(img_np)
-    if results: return results[0].text
-
-    # ATTEMPT 2: Grayscale
-    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-    results = zxingcpp.read_barcodes(gray)
-    if results: return results[0].text
-
-    # ATTEMPT 3: High Contrast (Thresholding)
-    # This turns image into pure Black & White, helping define edges
-    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    results = zxingcpp.read_barcodes(thresh)
-    if results: return results[0].text
-    
-    # ATTEMPT 4: Center Crop (Zoom in)
-    # Sometimes surrounding noise distracts the reader
-    h, w = gray.shape
-    center_h, center_w = h // 2, w // 2
-    crop_h, crop_w = h // 2, w // 2 # Take middle 50%
-    start_x = center_w - (crop_w // 2); start_y = center_h - (crop_h // 2)
-    cropped = gray[start_y:start_y+crop_h, start_x:start_x+crop_w]
-    results = zxingcpp.read_barcodes(cropped)
-    if results: return results[0].text
-
-    return None
+    except: return None
 
 # --- DATABASE ---
 def get_db_connection():
@@ -618,6 +605,7 @@ if "im_uom" not in st.session_state: st.session_state.im_uom = "PCS"
 if "im_hsn" not in st.session_state: st.session_state.im_hsn = ""
 if "im_barcode" not in st.session_state: st.session_state.im_barcode = ""
 if "im_weight" not in st.session_state: st.session_state.im_weight = ""
+if "retail_scanner" not in st.session_state: st.session_state.retail_scanner = ""
 
 # --- LOGIN PAGE ---
 def login_page():
@@ -869,7 +857,6 @@ def main_app():
              df_cust = fetch_user_data("Customers")
              df_items = fetch_user_data("Items")
              
-             # TOP SECTION (Identical to Customized)
              c1, c2, c3 = st.columns([0.60, 0.15, 0.25], vertical_alignment="bottom")
              with c1:
                 st.markdown("<p style='font-size:14px; font-weight:bold; margin-bottom:-10px;'>👤 Select Customer</p>", unsafe_allow_html=True)
@@ -896,63 +883,83 @@ def main_app():
                 st.session_state.bm_invoice_no = inv_no
 
              st.divider()
-
+             
+             # --- SCANNER SECTION ---
              c_scan_btn, c_scan_res = st.columns([0.2, 0.8], vertical_alignment="bottom")
              
-             # --- AGGRESSIVE SCANNER LOGIC ---
-             if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
-                 img_file = st.camera_input("Scan Barcode")
-                 if img_file:
-                     img_pil = Image.open(img_file)
-                     detected_code = robust_barcode_decode(img_pil)
-                     
-                     if detected_code:
-                         st.session_state.retail_scanner = detected_code
-                         st.success(f"Scanned: {detected_code}")
-                         st.rerun()
-                     else:
-                         st.warning("No code detected. Try holding steady and closer.")
-            
-             scan_code = st.text_input("Enter Barcode / Scan Result", key="retail_scanner")
+             # Capture Scan Code
+             scan_code = None
              
+             # 1. Camera Input
+             if c_scan_btn.toggle("📷 Camera", key="open_cam_ret"):
+                 if zxingcpp is None:
+                     st.error("Barcode library (zxing-cpp) not found. Please add to requirements.txt")
+                 else:
+                     img_file = st.camera_input("Scan Barcode")
+                     if img_file:
+                         img_pil = Image.open(img_file)
+                         detected_code = robust_barcode_decode(img_pil)
+                         if detected_code:
+                             scan_code = detected_code
+                             st.toast(f"Scanned: {scan_code}")
+                         else:
+                             st.warning("No code detected. Try holding steady and closer.")
+            
+             # 2. Manual/Gun Input (Overrides Camera if used)
+             manual_code = st.text_input("Enter Barcode / Scan Result", value=scan_code if scan_code else "", key="retail_scanner_input")
+             if manual_code:
+                 scan_code = manual_code
+             
+             # --- PROCESS SCAN CODE ---
              if scan_code:
                  found_item = df_items[df_items['Barcode'] == scan_code]
                  
                  if not found_item.empty:
+                     # Item Found
                      item_data = found_item.iloc[0]
-                     st.success(f"Found: **{item_data['Item Name']}** - ₹{item_data['Price']}")
                      
-                     if st.button(f"Add {item_data['Item Name']} to Cart", type="primary"):
-                         st.session_state.pos_cart.append({
-                            "Description": item_data['Item Name'],
-                            "HSN": item_data.get('HSN', ''),
-                            "Qty": 1.0,
-                            "UOM": item_data.get('UOM', 'PCS'),
-                            "Rate": float(item_data['Price']),
-                            "GST Rate": 0.0
-                        })
-                         st.toast("Item Added!")
-                 else:
-                     st.warning(f"New Barcode: {scan_code}")
-                     with st.expander("Add New Product Details", expanded=True):
-                         new_name = st.text_input("Product Name")
-                         c1, c2, c3 = st.columns(3)
-                         new_price = c1.number_input("Price", min_value=0.0)
-                         new_weight = c2.text_input("Weight")
-                         new_hsn = c3.text_input("HSN")
+                     # UI for Found Item
+                     with st.container(border=True):
+                         col_f_1, col_f_2 = st.columns([3, 1])
+                         col_f_1.success(f"**{item_data['Item Name']}** found! Price: ₹{item_data['Price']}")
                          
-                         if st.button("Save & Add to Cart"):
-                             if new_name:
-                                 save_row_to_sheet("Items", {
-                                     "Item Name": new_name, "Price": new_price, "UOM": "PCS", 
-                                     "HSN": new_hsn, "Image": "", "Barcode": scan_code, "Weight": new_weight
-                                 })
-                                 st.session_state.pos_cart.append({
-                                    "Description": new_name, "HSN": new_hsn, "Qty": 1.0, "UOM": "PCS",
-                                    "Rate": float(new_price), "GST Rate": 0.0
-                                })
-                                 st.success("Product Saved & Added!")
-                                 time.sleep(1); st.rerun()
+                         # Add Button logic
+                         if col_f_2.button("Add to Cart", type="primary", key="add_scanned_item"):
+                             st.session_state.pos_cart.append({
+                                "Description": item_data['Item Name'],
+                                "HSN": item_data.get('HSN', ''),
+                                "Qty": 1.0,
+                                "UOM": item_data.get('UOM', 'PCS'),
+                                "Rate": float(item_data['Price']),
+                                "GST Rate": 0.0
+                            })
+                             st.toast("Item Added to Cart!")
+                             # Clear scanner not natively possible without rerun loop, relying on user flow
+                 else:
+                     # Item Not Found -> Add New
+                     st.warning(f"New Barcode Detected: {scan_code}")
+                     with st.expander("Add New Product Details", expanded=True):
+                         with st.form("add_new_scanned_item"):
+                             new_name = st.text_input("Product Name")
+                             c1, c2, c3 = st.columns(3)
+                             new_price = c1.number_input("Price", min_value=0.0)
+                             new_weight = c2.text_input("Weight")
+                             new_hsn = c3.text_input("HSN")
+                             
+                             if st.form_submit_button("Save & Add to Cart"):
+                                 if new_name:
+                                     # Save to DB
+                                     save_row_to_sheet("Items", {
+                                         "Item Name": new_name, "Price": new_price, "UOM": "PCS", 
+                                         "HSN": new_hsn, "Image": "", "Barcode": scan_code, "Weight": new_weight
+                                     })
+                                     # Add to Cart
+                                     st.session_state.pos_cart.append({
+                                        "Description": new_name, "HSN": new_hsn, "Qty": 1.0, "UOM": "PCS",
+                                        "Rate": float(new_price), "GST Rate": 0.0
+                                    })
+                                     st.success("Product Saved & Added!")
+                                     time.sleep(1); st.rerun()
 
              st.divider()
              
@@ -1150,7 +1157,6 @@ def main_app():
                                         else:
                                             st.session_state.pos_cart.pop(idx)
                                         
-                                        # Force Update Checkout Input
                                         if idx < len(st.session_state.pos_cart):
                                              st.session_state[f"cart_qty_{idx}"] = st.session_state.pos_cart[idx]['Qty']
                                         st.rerun()
@@ -1192,7 +1198,6 @@ def main_app():
                             
                             c_qty, c_rate = st.columns(2)
                             
-                            # FORCE KEY-VALUE SYNC FOR QTY
                             if f"cart_qty_{idx}" not in st.session_state:
                                 st.session_state[f"cart_qty_{idx}"] = float(item['Qty'])
                                 
@@ -1219,7 +1224,6 @@ def main_app():
                          elif not inv_no:
                              st.error("Enter Invoice No!")
                          else:
-                             # FIX: Fetch Customer Data First
                              cust_mob = ""
                              if sel_cust_name != "Select" and not df_cust.empty:
                                  cust_row_data = df_cust[df_cust["Name"] == sel_cust_name].iloc[0]
